@@ -917,3 +917,73 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeLike(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"plain", "plain"},
+		{"100%", "100!%"},
+		{"under_score", "under!_score"},
+		{"has!bang", "has!!bang"},
+		{`C:\Users\foo`, `C:\Users\foo`},
+		{"combo!_%", "combo!!!_!%"},
+	}
+	for _, tt := range tests {
+		got := escapeLike(tt.input)
+		if got != tt.want {
+			t.Errorf(
+				"escapeLike(%q) = %q, want %q",
+				tt.input, got, tt.want,
+			)
+		}
+	}
+}
+
+func TestPrefixFilterWithSpecialChars(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create repos with LIKE-special chars in path
+	createRepo(t, db, "/tmp/workspace/repo_one")
+	createRepo(t, db, "/tmp/workspace/repo%two")
+	createRepo(t, db, "/tmp/other/repo")
+
+	// Add a job to each repo
+	repo1, _ := db.GetRepoByPath("/tmp/workspace/repo_one")
+	commit1 := createCommit(t, db, repo1.ID, "sha1")
+	enqueueJob(t, db, repo1.ID, commit1.ID, "sha1")
+
+	repo2, _ := db.GetRepoByPath("/tmp/workspace/repo%two")
+	commit2 := createCommit(t, db, repo2.ID, "sha2")
+	enqueueJob(t, db, repo2.ID, commit2.ID, "sha2")
+
+	repo3, _ := db.GetRepoByPath("/tmp/other/repo")
+	commit3 := createCommit(t, db, repo3.ID, "sha3")
+	enqueueJob(t, db, repo3.ID, commit3.ID, "sha3")
+
+	t.Run("prefix with underscore matches correctly", func(t *testing.T) {
+		jobs, err := db.ListJobs(
+			"", "", 50, 0, WithRepoPrefix("/tmp/workspace"),
+		)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 jobs under /tmp/workspace, got %d", len(jobs))
+		}
+	})
+
+	t.Run("prefix filter excludes non-matching", func(t *testing.T) {
+		jobs, err := db.ListJobs(
+			"", "", 50, 0, WithRepoPrefix("/tmp/other"),
+		)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Errorf("Expected 1 job under /tmp/other, got %d", len(jobs))
+		}
+	})
+}

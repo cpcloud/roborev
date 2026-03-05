@@ -146,7 +146,7 @@ func (db *DB) ListReposWithReviewCountsByPrefix(prefix string) ([]RepoWithCount,
 		SELECT r.name, r.root_path, COUNT(rj.id) as job_count
 		FROM repos r
 		LEFT JOIN review_jobs rj ON rj.repo_id = r.id
-		WHERE r.root_path LIKE ? || '/%' ESCAPE '\'
+		WHERE r.root_path LIKE ? || '/%' ESCAPE '!'
 		GROUP BY r.id, r.name, r.root_path
 		ORDER BY r.name
 	`, escaped)

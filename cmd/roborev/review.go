@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -84,11 +85,14 @@ Examples:
 				}
 				// Scan for child git repos to give a helpful hint
 				if children := findChildGitRepos(repoPath); len(children) > 0 {
-					msg := "not in a git repository; use --repo to specify one:"
+					absDir, _ := filepath.Abs(repoPath)
+					var b strings.Builder
+					b.WriteString("not in a git repository; use --repo to specify one:")
 					for _, name := range children {
-						msg += "\n  roborev review --repo " + name
+						b.WriteString("\n  roborev review --repo ")
+						b.WriteString(filepath.Join(absDir, name))
 					}
-					return fmt.Errorf("%s", msg)
+					return fmt.Errorf("%s", b.String())
 				}
 				return fmt.Errorf("not a git repository: %w", err)
 			}

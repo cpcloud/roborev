@@ -1383,10 +1383,12 @@ func WithRepoPrefix(prefix string) ListJobsOption {
 }
 
 // escapeLike escapes SQL LIKE wildcards (% and _) in a literal string.
+// Uses '!' as the ESCAPE character to avoid conflicts with backslashes
+// in Windows paths stored in root_path.
 func escapeLike(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "%", "\\%")
-	s = strings.ReplaceAll(s, "_", "\\_")
+	s = strings.ReplaceAll(s, "!", "!!")
+	s = strings.ReplaceAll(s, "%", "!%")
+	s = strings.ReplaceAll(s, "_", "!_")
 	return s
 }
 
@@ -1419,7 +1421,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		opt(&o)
 	}
 	if repoFilter == "" && o.repoPrefix != "" {
-		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '\\'")
+		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
 		args = append(args, o.repoPrefix)
 	}
 	if o.gitRef != "" {
@@ -1590,7 +1592,7 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 		opt(&o)
 	}
 	if repoFilter == "" && o.repoPrefix != "" {
-		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '\\'")
+		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
 		args = append(args, o.repoPrefix)
 	}
 	if o.branch != "" {

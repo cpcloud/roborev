@@ -321,7 +321,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("nonexistent-agent", cfg)
+	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
 	if err != nil {
 		t.Fatalf("GetAvailableWithConfig failed: %v", err)
 	}
@@ -1112,4 +1112,82 @@ func TestReadTextFileWindow(t *testing.T) {
 			t.Fatalf("expected byte-limit error, got: %v", err)
 		}
 	})
+}
+
+func TestACPAliasCollisionFixed(t *testing.T) {
+	// When acp.name = "agent", requesting "cursor" should resolve to the
+	// real cursor agent, not to ACP via the "agent" → "cursor" alias.
+	// The cursor agent's binary is called "agent" (not "cursor").
+	fakeBin := t.TempDir()
+	agentBin := "agent"
+	if runtime.GOOS == "windows" {
+		agentBin += ".exe"
+	}
+	agentPath := filepath.Join(fakeBin, agentBin)
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake agent binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "agent",
+			Command: "acp-agent",
+		},
+	}
+
+	resolved, err := GetAvailableWithConfig("cursor", cfg)
+	if err != nil {
+		t.Fatalf("GetAvailableWithConfig failed: %v", err)
+	}
+
+	if resolved.Name() != "cursor" {
+		t.Fatalf("Expected cursor agent, got %q", resolved.Name())
+	}
+}
+
+func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
+	cfg := &config.Config{}
+
+	_, err := GetAvailableWithConfig("typo-agent", cfg)
+	if err == nil {
+		t.Fatal("Expected error for unknown agent name")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
+	}
+}
+
+func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
+	// acp.name = "claude" should match request "claude" but NOT "claude-code".
+	// Requesting the canonical name should go to the real agent, not ACP.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	claudePath := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake claude binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "claude",
+			Command: defaultACPCommand,
+		},
+	}
+
+	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	if err != nil {
+		t.Fatalf("GetAvailableWithConfig failed: %v", err)
+	}
+
+	if resolved.Name() == "acp" {
+		t.Fatalf("Request for 'claude-code' should not route to ACP when acp.name='claude'")
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("Expected claude-code agent, got %q", resolved.Name())
+	}
 }

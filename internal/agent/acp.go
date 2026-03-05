@@ -1485,13 +1485,11 @@ func isConfiguredACPAgentName(name string, cfg *config.Config) bool {
 		return false
 	}
 
-	// Compare both raw and alias-normalized forms so ACP names configured as
-	// aliases (for example "claude") still match canonical requests
-	// (for example "claude-code").
-	if rawName == configuredName {
-		return true
-	}
-	return resolveAlias(rawName) == resolveAlias(configuredName)
+	// Exact match only — no alias resolution. This prevents collisions
+	// where an alias like "agent" → "cursor" would incorrectly route
+	// cursor requests to ACP. Callers pass rawPreferred (pre-alias) so
+	// `acp.name = "claude"` matches request "claude" but not "claude-code".
+	return rawName == configuredName
 }
 
 func configuredACPAgent(cfg *config.Config) *ACPAgent {
@@ -1509,9 +1507,10 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 // It treats cfg.ACP.Name as an alias for "acp" and applies cfg.ACP command/mode/model
 // at resolution time instead of package-init time.
 func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error) {
-	preferred = resolveAlias(strings.TrimSpace(preferred))
+	rawPreferred := strings.TrimSpace(preferred)
+	preferred = resolveAlias(rawPreferred)
 
-	if isConfiguredACPAgentName(preferred, cfg) {
+	if isConfiguredACPAgentName(rawPreferred, cfg) {
 		acpAgent := configuredACPAgent(cfg)
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil

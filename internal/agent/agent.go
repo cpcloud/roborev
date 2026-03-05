@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -103,9 +105,24 @@ func SetAnthropicAPIKey(key string) {
 	anthropicAPIKey.Store(key)
 }
 
+// UnknownAgentError is returned when a requested agent name is not
+// in the registry and is not a recognized alias.
+type UnknownAgentError struct {
+	Name  string
+	Known []string
+}
+
+func (e *UnknownAgentError) Error() string {
+	return fmt.Sprintf(
+		"unknown agent %q (known: %s)",
+		e.Name, strings.Join(e.Known, ", "),
+	)
+}
+
 // aliases maps short names to full agent names
 var aliases = map[string]string{
 	"claude": "claude-code",
+	"agent":  "cursor",
 }
 
 // resolveAlias returns the canonical agent name, resolving aliases
@@ -171,6 +188,19 @@ func IsAvailable(name string) bool {
 func GetAvailable(preferred string) (Agent, error) {
 	// Resolve alias upfront for consistent comparisons
 	preferred = resolveAlias(preferred)
+
+	// Reject unknown agent names (typos, config mistakes).
+	// Known-but-unavailable agents still fall back below.
+	if preferred != "" {
+		if _, ok := registry[preferred]; !ok {
+			known := Available()
+			sort.Strings(known)
+			return nil, &UnknownAgentError{
+				Name:  preferred,
+				Known: known,
+			}
+		}
+	}
 
 	// Try preferred agent first
 	if preferred != "" && IsAvailable(preferred) {

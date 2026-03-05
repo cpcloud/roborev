@@ -908,6 +908,7 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 	tests := []struct {
 		name          string
 		requestAgent  string
+		defaultAgent  string
 		mockBinaries  []string // binary names to place in PATH
 		expectedAgent string   // expected agent stored in job
 		expectedCode  int      // expected HTTP status code
@@ -934,6 +935,21 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			expectedCode:  http.StatusCreated,
 		},
 		{
+			name:          "explicit agent alias resolves to cursor",
+			requestAgent:  "agent",
+			mockBinaries:  []string{"agent"},
+			expectedAgent: "cursor",
+			expectedCode:  http.StatusCreated,
+		},
+		{
+			name:          "default agent alias resolves to cursor",
+			requestAgent:  "",
+			defaultAgent:  "agent",
+			mockBinaries:  []string{"agent"},
+			expectedAgent: "cursor",
+			expectedCode:  http.StatusCreated,
+		},
+		{
 			name:          "explicit codex kept when available",
 			requestAgent:  "codex",
 			mockBinaries:  []string{"codex"},
@@ -953,12 +969,21 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			mockBinaries: nil,
 			expectedCode: http.StatusServiceUnavailable,
 		},
+		{
+			name:         "unknown agent returns 400",
+			requestAgent: "typo-agent",
+			mockBinaries: nil,
+			expectedCode: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Each subtest gets its own server/DB to avoid SHA dedup conflicts
 			server, _, _ := newTestServer(t)
+			if tt.defaultAgent != "" {
+				server.configWatcher.Config().DefaultAgent = tt.defaultAgent
+			}
 
 			// Isolate PATH: only mock binaries + git (no real agent CLIs)
 			origPath := os.Getenv("PATH")

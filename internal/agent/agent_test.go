@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +30,33 @@ func TestAgentRegistry(t *testing.T) {
 	_, err := Get("unknown-agent")
 	if err == nil {
 		t.Error("Expected error for unknown agent")
+	}
+}
+
+func TestCanonicalNameAliases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "claude", want: "claude-code"},
+		{input: "agent", want: "cursor"},
+		{input: "cursor", want: "cursor"},
+	}
+
+	for _, tt := range tests {
+		if got := CanonicalName(tt.input); got != tt.want {
+			t.Errorf("CanonicalName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestGetSupportsAgentAlias(t *testing.T) {
+	a, err := Get("agent")
+	if err != nil {
+		t.Fatalf("Get(agent) returned error: %v", err)
+	}
+	if a.Name() != "cursor" {
+		t.Fatalf("Get(agent) resolved to %q, want %q", a.Name(), "cursor")
 	}
 }
 
@@ -359,5 +388,49 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 				return tt.factory(cmdPath).WithModel(tt.testModel)
 			}, tt.modelFlag, tt.testModel)
 		})
+	}
+}
+
+func TestGetAvailableRejectsUnknownAgent(t *testing.T) {
+	_, err := GetAvailable("typo-agent")
+	if err == nil {
+		t.Fatal("Expected error for unknown agent name")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
+	}
+}
+
+func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
+	// Isolate registry: "codex" has a missing binary, "claude-code"
+	// has its binary on PATH. Request "codex" and verify fallback
+	// returns "claude-code" without an "unknown agent" error.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	claudeBin := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake claude binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex")
+	if err != nil {
+		if strings.Contains(err.Error(), "unknown agent") {
+			t.Fatalf("Known agent should not produce unknown agent error: %v", err)
+		}
+		t.Fatalf("Expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("Expected fallback to 'claude-code', got %q", resolved.Name())
 	}
 }

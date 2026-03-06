@@ -2,14 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+	"github.com/mattn/go-runewidth"
+	"github.com/roborev-dev/roborev/internal/storage"
 	"maps"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
-	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // Task view column constants (prefixed tcol to avoid collision with queue's col constants).
@@ -495,9 +495,28 @@ func (m model) renderPatchView() string {
 		}
 	}
 
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"j/k/↑/↓", "scroll"}, {"esc", "back to tasks"}},
-	}, m.width))
+	if m.savePatchInputActive {
+		label := "Save to: "
+		inputWidth := max(m.width-len(label)-2, 10)
+		display := m.savePatchInput
+		if w := runewidth.StringWidth(display); w > inputWidth {
+			// Truncate from the left so the cursor end is visible
+			rs := []rune(display)
+			for runewidth.StringWidth(string(rs)) > inputWidth {
+				rs = rs[1:]
+			}
+			display = string(rs)
+		}
+		display = display + strings.Repeat(" ", max(inputWidth-runewidth.StringWidth(display), 0))
+		b.WriteString(helpStyle.Render(label) + display + "\x1b[K\n")
+		b.WriteString(renderHelpTable([][]helpItem{
+			{{"enter", "save"}, {"esc", "cancel"}},
+		}, m.width))
+	} else {
+		b.WriteString(renderHelpTable([][]helpItem{
+			{{"j/k/↑/↓", "scroll"}, {"s", "save"}, {"esc", "back to tasks"}},
+		}, m.width))
+	}
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }

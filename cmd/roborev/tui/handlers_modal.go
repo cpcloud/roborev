@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -465,6 +468,39 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handlePatchKey handles key input in the patch viewer.
 func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// When the save-filename input is active, route keys there.
+	if m.savePatchInputActive {
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.savePatchInputActive = false
+			m.savePatchInput = ""
+			return m, nil
+		case "enter":
+			path := strings.TrimSpace(m.savePatchInput)
+			if path == "" {
+				return m, nil
+			}
+			m.savePatchInputActive = false
+			m.savePatchInput = ""
+			return m, m.savePatchToFile(path)
+		case "backspace":
+			if len(m.savePatchInput) > 0 {
+				runes := []rune(m.savePatchInput)
+				m.savePatchInput = string(runes[:len(runes)-1])
+			}
+			return m, nil
+		default:
+			for _, r := range msg.Runes {
+				if unicode.IsPrint(r) {
+					m.savePatchInput += string(r)
+				}
+			}
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -473,6 +509,10 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.patchText = ""
 		m.patchScroll = 0
 		m.patchJobID = 0
+		return m, nil
+	case "s":
+		m.savePatchInputActive = true
+		m.savePatchInput = filepath.Join(os.TempDir(), fmt.Sprintf("roborev-%d.patch", m.patchJobID))
 		return m, nil
 	case "up", "k":
 		if m.patchScroll > 0 {
@@ -500,4 +540,15 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// savePatchToFile writes the current patch text to path.
+func (m model) savePatchToFile(path string) tea.Cmd {
+	patch := m.patchText
+	return func() tea.Msg {
+		if err := os.WriteFile(path, []byte(patch), 0o644); err != nil {
+			return savePatchResultMsg{err: err}
+		}
+		return savePatchResultMsg{path: path}
+	}
 }

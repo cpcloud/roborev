@@ -816,16 +816,51 @@ func IsBranchExcluded(repoPath, branch string) bool {
 	return slices.Contains(repoCfg.ExcludedBranches, branch)
 }
 
-// IsCommitMessageExcluded checks if a commit should be excluded from reviews
-// based on substring patterns configured in the repo's .roborev.toml.
+// IsCommitMessageExcluded checks if a commit should be excluded
+// from reviews based on substring patterns configured in the
+// repo's .roborev.toml.
 func IsCommitMessageExcluded(repoPath, message string) bool {
 	repoCfg, err := LoadRepoConfig(repoPath)
 	if err != nil || repoCfg == nil {
 		return false
 	}
+	return messageMatchesPatterns(
+		message, repoCfg.ExcludedCommitPatterns,
+	)
+}
+
+// AllCommitMessagesExcluded reports whether every message in the
+// slice matches at least one excluded-commit pattern. Returns false
+// when the slice is empty or the repo has no config.
+func AllCommitMessagesExcluded(
+	repoPath string, messages []string,
+) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil || repoCfg == nil {
+		return false
+	}
+	for _, msg := range messages {
+		if !messageMatchesPatterns(
+			msg, repoCfg.ExcludedCommitPatterns,
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+// messageMatchesPatterns returns true when message contains at
+// least one non-empty pattern (case-insensitive substring match).
+func messageMatchesPatterns(
+	message string, patterns []string,
+) bool {
 	lower := strings.ToLower(message)
-	for _, pattern := range repoCfg.ExcludedCommitPatterns {
-		if pattern != "" && strings.Contains(lower, strings.ToLower(pattern)) {
+	for _, pattern := range patterns {
+		if pattern != "" &&
+			strings.Contains(lower, strings.ToLower(pattern)) {
 			return true
 		}
 	}

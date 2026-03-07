@@ -750,8 +750,32 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Store as full SHA range
+		// Check if all commits in the range are excluded
 		fullRef := startSHA + ".." + endSHA
+		if rangeCommits, rcErr := git.GetRangeCommits(
+			gitCwd, fullRef,
+		); rcErr == nil && len(rangeCommits) > 0 {
+			messages := make([]string, 0, len(rangeCommits))
+			for _, rc := range rangeCommits {
+				if ci, ciErr := git.GetCommitInfo(
+					repoRoot, rc,
+				); ciErr == nil {
+					messages = append(
+						messages, ci.Subject+"\n"+ci.Body,
+					)
+				}
+			}
+			if config.AllCommitMessagesExcluded(
+				repoRoot, messages,
+			) {
+				writeJSON(w, map[string]any{
+					"skipped": true,
+					"reason":  "all commits in range match excluded patterns",
+				})
+				return
+			}
+		}
+
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			GitRef:     fullRef,

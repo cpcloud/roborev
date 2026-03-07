@@ -499,6 +499,172 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	})
 }
 
+func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	testutil.InitTestGitRepo(t, repoDir)
+
+	// Write repo config with excluded_commit_patterns
+	repoConfig := filepath.Join(repoDir, ".roborev.toml")
+	configContent := `excluded_commit_patterns = ["[skip review]", "[wip]"]`
+	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write repo config: %v", err)
+	}
+
+	// Create a commit whose message matches an exclusion pattern
+	addExcluded := exec.Command("git", "-C", repoDir,
+		"commit", "--allow-empty", "-m", "wip: checkpoint [skip review]")
+	if out, err := addExcluded.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	t.Run("matching commit returns skipped", func(t *testing.T) {
+		reqData := EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/enqueue", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s",
+				w.Code, w.Body.String())
+		}
+
+		var resp struct {
+			Skipped bool   `json:"skipped"`
+			Reason  string `json:"reason"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if !resp.Skipped {
+			t.Error("expected skipped=true")
+		}
+		if !strings.Contains(resp.Reason, "excluded") {
+			t.Errorf("reason should mention excluded, got %q",
+				resp.Reason)
+		}
+
+		// No job should have been created
+		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		if queued != 0 {
+			t.Errorf("expected 0 queued jobs, got %d", queued)
+		}
+	})
+
+	// Create a commit that does NOT match any exclusion pattern
+	addNormal := exec.Command("git", "-C", repoDir,
+		"commit", "--allow-empty", "-m", "feat: add endpoint")
+	if out, err := addNormal.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	t.Run("non-matching commit enqueues normally", func(t *testing.T) {
+		reqData := EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/enqueue", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("expected 201, got %d: %s",
+				w.Code, w.Body.String())
+		}
+
+		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		if queued != 1 {
+			t.Errorf("expected 1 queued job, got %d", queued)
+		}
+	})
+
+	t.Run("range where all commits excluded returns skipped",
+		func(t *testing.T) {
+			// Create a branch with only excluded commits
+			branchCmd := exec.Command("git", "-C", repoDir,
+				"checkout", "-b", "all-excluded")
+			if out, err := branchCmd.CombinedOutput(); err != nil {
+				t.Fatalf("checkout failed: %v\n%s", err, out)
+			}
+			base := testutil.GetHeadSHA(t, repoDir)
+
+			for i := range 2 {
+				cmd := exec.Command("git", "-C", repoDir,
+					"commit", "--allow-empty",
+					"-m", fmt.Sprintf("[wip] checkpoint %d", i))
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("commit failed: %v\n%s", err, out)
+				}
+			}
+
+			ref := base + "..HEAD"
+			reqData := EnqueueRequest{
+				RepoPath: repoDir, GitRef: ref, Agent: "test",
+			}
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/enqueue", reqData,
+			)
+			w := httptest.NewRecorder()
+			server.handleEnqueue(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d: %s",
+					w.Code, w.Body.String())
+			}
+
+			var resp struct {
+				Skipped bool   `json:"skipped"`
+				Reason  string `json:"reason"`
+			}
+			testutil.DecodeJSON(t, w, &resp)
+			if !resp.Skipped {
+				t.Error("expected skipped=true for all-excluded range")
+			}
+		})
+
+	t.Run("range with mixed commits enqueues normally",
+		func(t *testing.T) {
+			branchCmd := exec.Command("git", "-C", repoDir,
+				"checkout", "-b", "mixed-range")
+			if out, err := branchCmd.CombinedOutput(); err != nil {
+				t.Fatalf("checkout failed: %v\n%s", err, out)
+			}
+			base := testutil.GetHeadSHA(t, repoDir)
+
+			cmds := [][]string{
+				{"commit", "--allow-empty", "-m", "[wip] temp"},
+				{"commit", "--allow-empty", "-m", "feat: real work"},
+			}
+			for _, args := range cmds {
+				cmd := exec.Command("git", append(
+					[]string{"-C", repoDir}, args...)...)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("commit failed: %v\n%s", err, out)
+				}
+			}
+
+			ref := base + "..HEAD"
+			reqData := EnqueueRequest{
+				RepoPath: repoDir, GitRef: ref, Agent: "test",
+			}
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/enqueue", reqData,
+			)
+			w := httptest.NewRecorder()
+			server.handleEnqueue(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Errorf("expected 201, got %d: %s",
+					w.Code, w.Body.String())
+			}
+		})
+}
+
 func TestHandleEnqueueBranchFallback(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

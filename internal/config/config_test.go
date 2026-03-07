@@ -458,6 +458,63 @@ func TestIsCommitMessageExcluded(t *testing.T) {
 	}
 }
 
+func TestAllCommitMessagesExcluded(t *testing.T) {
+	tests := []struct {
+		name       string
+		repoConfig string
+		messages   []string
+		want       bool
+	}{
+		{
+			name:     "empty messages returns false",
+			messages: nil,
+			want:     false,
+		},
+		{
+			name:       "all match",
+			repoConfig: `excluded_commit_patterns = ["[wip]"]`,
+			messages: []string{
+				"[wip] checkpoint 1",
+				"[wip] checkpoint 2",
+			},
+			want: true,
+		},
+		{
+			name:       "one does not match",
+			repoConfig: `excluded_commit_patterns = ["[wip]"]`,
+			messages: []string{
+				"[wip] checkpoint",
+				"feat: real work",
+			},
+			want: false,
+		},
+		{
+			name:     "no config file",
+			messages: []string{"[wip] anything"},
+			want:     false,
+		},
+		{
+			name:       "no patterns configured",
+			repoConfig: `agent = "codex"`,
+			messages:   []string{"[wip] anything"},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			got := AllCommitMessagesExcluded(tmpDir, tt.messages)
+			if got != tt.want {
+				t.Errorf(
+					"AllCommitMessagesExcluded() = %v, want %v",
+					got, tt.want,
+				)
+			}
+		})
+	}
+}
+
 func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	t.Run("empty URL returns empty", func(t *testing.T) {
 		cfg := SyncConfig{}

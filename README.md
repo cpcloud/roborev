@@ -51,19 +51,18 @@ roborev tui           # View reviews in interactive UI
   [beads](https://github.com/steveyegge/beads) integration creates trackable issues from
   review failures automatically.
 
-## The Fix Loop
+## The Agentic Fix Loop
 
-When reviews find issues, fix them with a single command:
+When reviews find issues, copy-and-paste the reviews into your
+interactive agent sessions, or invoke the `roborev:fix` skills. You
+can also address open reviews on the command line non-interactively
+with `roborev fix`.
 
-```bash
-roborev fix                     # Fix all open reviews
-roborev fix 123                 # Fix a specific job
-```
+`roborev fix` shows the review findings to an agent, which applies
+changes and commits. The new commit gets reviewed automatically,
+closing the loop.
 
-`fix` shows the review findings to an agent, which applies changes and
-commits. The new commit gets reviewed automatically, closing the loop.
-
-For fully automated iteration, use `refine`:
+For fully automated iteration (advanced feature), use `refine`:
 
 ```bash
 roborev refine                  # Fix, re-review, repeat until passing
@@ -145,38 +144,6 @@ Project-specific review instructions here.
 
 See [configuration guide](https://roborev.io/configuration/) for all options.
 
-## Hooks
-
-Run custom commands when reviews complete or fail. Add to `.roborev.toml`:
-
-```toml
-[[hooks]]
-event = "review.completed"
-command = "notify-send 'Review done for {repo_name} ({sha})'"
-```
-
-Template variables: `{job_id}`, `{repo}`, `{repo_name}`, `{sha}`, `{verdict}`, `{error}`.
-
-For webhook endpoints, use the `webhook` hook type:
-
-```toml
-[[hooks]]
-event = "review.completed"
-type = "webhook"
-url = "https://example.com/roborev-webhook"
-```
-
-The built-in `beads` hook type creates [beads](https://github.com/steveyegge/beads)
-issues from review failures, giving your agents a task queue of findings to fix:
-
-```toml
-[[hooks]]
-event = "review.*"
-type = "beads"
-```
-
-See [hooks guide](https://roborev.io/guides/hooks/) for details.
-
 ## Supported Agents
 
 | Agent | Install |
@@ -207,25 +174,6 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Hooks](https://roborev.io/guides/hooks/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
-
-## Development
-
-```bash
-git clone https://github.com/roborev-dev/roborev
-cd roborev
-go test ./...
-make lint            # run full static lint checks locally
-make install
-make install-hooks   # install pre-commit hook to run lint before commit
-# optional ACP end-to-end smoke test (Codex adapter)
-make test-acp-integration
-# disable mode negotiation for adapters that do not support session modes yet
-make test-acp-integration ACP_TEST_DISABLE_MODE=1
-# optional adapter-specific smoke tests
-make test-acp-integration-codex   # codex target auto-disables mode negotiation
-make test-acp-integration-claude  # claude target auto-disables mode negotiation
-make test-acp-integration-gemini  # gemini target auto-disables mode negotiation
-```
 
 ## License
 

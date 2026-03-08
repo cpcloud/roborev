@@ -129,7 +129,8 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
-	closeOnContextDone(ctx, stdoutPipe)
+	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
+	defer stopClosingPipe()
 	// Tee stderr to output writer for live error visibility
 	if sw != nil {
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
@@ -145,6 +146,9 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		if parseErr != nil {
 			return "", fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderr.String()))
 		}

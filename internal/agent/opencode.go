@@ -110,7 +110,8 @@ func (a *OpenCodeAgent) Review(
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
-	closeOnContextDone(ctx, stdoutPipe)
+	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
+	defer stopClosingPipe()
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start opencode: %w", err)
@@ -126,6 +127,9 @@ func (a *OpenCodeAgent) Review(
 	_, _ = io.Copy(io.Discard, stdoutPipe)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "opencode failed")
 		if parseErr != nil {

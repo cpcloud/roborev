@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,12 +15,27 @@ func configureSubprocess(cmd *exec.Cmd) {
 	cmd.WaitDelay = subprocessWaitDelay
 }
 
-func closeOnContextDone(ctx context.Context, c io.Closer) {
-	if c == nil {
-		return
+func closeOnContextDone(ctx context.Context, c io.Closer) func() {
+	if c == nil || ctx.Done() == nil {
+		return func() {}
 	}
+	done := make(chan struct{})
+	var once sync.Once
+	var stopped atomic.Bool
 	go func() {
-		<-ctx.Done()
-		_ = c.Close()
+		select {
+		case <-ctx.Done():
+			if stopped.Load() {
+				return
+			}
+			_ = c.Close()
+		case <-done:
+		}
 	}()
+	return func() {
+		stopped.Store(true)
+		once.Do(func() {
+			close(done)
+		})
+	}
 }

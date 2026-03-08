@@ -444,7 +444,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, err)
 		}
 	}()
-	agentOutput := io.MultiWriter(outputWriter, jobLog)
+	agentOutput := io.MultiWriter(jobLog, outputWriter)
 	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)

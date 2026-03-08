@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -276,6 +278,34 @@ func TestJobLogWriter(t *testing.T) {
 			t.Errorf("contents = %q, want %q", data, "buffered\n")
 		}
 	})
+
+	t.Run("writes_log_before_companion_failure", func(t *testing.T) {
+		setupTestEnv(t)
+		w := newJobLogWriter(203)
+		defer w.Close()
+
+		mw := io.MultiWriter(w, failingWriter{})
+		if _, err := mw.Write([]byte("persist me\n")); err == nil {
+			t.Fatal("expected companion writer failure")
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		data, err := os.ReadFile(JobLogPath(203))
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(data) != "persist me\n" {
+			t.Errorf("contents = %q, want %q", data, "persist me\n")
+		}
+	})
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("boom")
 }
 
 func TestReadJobLog(t *testing.T) {

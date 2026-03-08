@@ -119,7 +119,8 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
-	closeOnContextDone(ctx, stdoutPipe)
+	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
+	defer stopClosingPipe()
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
@@ -130,6 +131,9 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := a.parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		if err != nil {
 			return "", fmt.Errorf("cursor agent failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
 		}

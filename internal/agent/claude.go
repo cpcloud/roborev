@@ -152,7 +152,8 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
-	closeOnContextDone(ctx, stdoutPipe)
+	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
+	defer stopClosingPipe()
 	cmd.Stderr = &stderr
 
 	// Always pipe prompt via stdin (stream-json mode)
@@ -166,6 +167,9 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		// Build a detailed error including any partial output and stream errors
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "%s failed", a.Name())

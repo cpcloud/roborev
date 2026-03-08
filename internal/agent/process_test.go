@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"os/exec"
 	"sync/atomic"
 	"testing"
@@ -117,5 +118,28 @@ func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) 
 
 	if got := contextProcessError(ctx, tracker, err, nil); got != nil {
 		t.Fatalf("signal exit should not be rewritten as context error, got %v (run err: %v)", got, err)
+	}
+}
+
+func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testing.T) {
+	skipIfWindows(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", "exit 0")
+	tracker := configureSubprocess(cmd)
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if cmd.Cancel == nil {
+		t.Fatal("expected wrapped cancel")
+	}
+	if err := cmd.Cancel(); !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("expected os.ErrProcessDone, got %v", err)
+	}
+	if tracker.canceledByContext.Load() {
+		t.Fatal("tracker should stay false when cancel runs after process exit")
 	}
 }

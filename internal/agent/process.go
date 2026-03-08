@@ -24,8 +24,11 @@ func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	if cmd.Cancel != nil {
 		cancel := cmd.Cancel
 		cmd.Cancel = func() error {
-			tracker.canceledByContext.Store(true)
-			return cancel()
+			err := cancel()
+			if err == nil {
+				tracker.canceledByContext.Store(true)
+			}
+			return err
 		}
 	}
 	return tracker

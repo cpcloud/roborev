@@ -93,7 +93,7 @@ func (a *OpenCodeAgent) Review(
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	// Share a single syncWriter so stdout and stderr writes
 	// to the output writer are serialized by one mutex.
@@ -127,7 +127,7 @@ func (a *OpenCodeAgent) Review(
 	_, _ = io.Copy(io.Discard, stdoutPipe)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, waitErr, parseErr); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
 			return "", ctxErr
 		}
 		var detail strings.Builder
@@ -148,7 +148,7 @@ func (a *OpenCodeAgent) Review(
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
-	if ctxErr := contextProcessError(ctx, nil, parseErr); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
 		return "", ctxErr
 	}
 

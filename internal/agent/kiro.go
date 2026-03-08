@@ -149,7 +149,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	// kiro-cli emits ANSI terminal escape codes that are not
 	// suitable for streaming. Capture and return stripped text.
@@ -158,7 +158,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if ctxErr := contextProcessError(ctx, err, nil); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}
 		return "", fmt.Errorf(

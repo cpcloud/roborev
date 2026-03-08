@@ -138,8 +138,9 @@ func newJobLogWriter(jobID int64) *jobLogWriter {
 func (w *jobLogWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if len(p) == 0 {
-		return len(p), nil
+	origLen := len(p)
+	if origLen == 0 {
+		return 0, nil
 	}
 	if w.f == nil && time.Since(w.lastTry) >= jobLogOpenRetryInterval {
 		w.tryOpenLocked(false)
@@ -148,7 +149,7 @@ func (w *jobLogWriter) Write(p []byte) (int, error) {
 		if err := w.flushBufferedLocked(); err == nil {
 			n, err := w.f.Write(p)
 			if err == nil && n == len(p) {
-				return len(p), nil
+				return origLen, nil
 			}
 			if n > 0 {
 				p = p[n:]
@@ -162,7 +163,7 @@ func (w *jobLogWriter) Write(p []byte) (int, error) {
 		}
 	}
 	w.bufferLocked(p)
-	return len(p), nil
+	return origLen, nil
 }
 
 func (w *jobLogWriter) Close() error {

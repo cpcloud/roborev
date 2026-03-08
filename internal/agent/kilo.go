@@ -106,7 +106,7 @@ func (a *KiloAgent) Review(
 	cmd := exec.CommandContext(ctx, a.Command, a.buildArgs()...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	sw := newSyncWriter(output)
 
@@ -143,7 +143,7 @@ func (a *KiloAgent) Review(
 	_, _ = io.Copy(&stdoutRaw, stdoutPipe)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, waitErr, parseErr); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
 			return "", ctxErr
 		}
 		var detail strings.Builder
@@ -171,7 +171,7 @@ func (a *KiloAgent) Review(
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
-	if ctxErr := contextProcessError(ctx, nil, parseErr); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
 		return "", ctxErr
 	}
 

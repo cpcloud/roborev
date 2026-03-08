@@ -14,8 +14,21 @@ import (
 
 var subprocessWaitDelay = 5 * time.Second
 
-func configureSubprocess(cmd *exec.Cmd) {
+type subprocessTracker struct {
+	canceledByContext atomic.Bool
+}
+
+func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	cmd.WaitDelay = subprocessWaitDelay
+	tracker := &subprocessTracker{}
+	if cmd.Cancel != nil {
+		cancel := cmd.Cancel
+		cmd.Cancel = func() error {
+			tracker.canceledByContext.Store(true)
+			return cancel()
+		}
+	}
+	return tracker
 }
 
 func closeOnContextDone(ctx context.Context, c io.Closer) func() {
@@ -44,7 +57,7 @@ func closeOnContextDone(ctx context.Context, c io.Closer) func() {
 }
 
 func contextProcessError(
-	ctx context.Context, runErr error, parseErr error,
+	ctx context.Context, tracker *subprocessTracker, runErr error, parseErr error,
 ) error {
 	ctxErr := ctx.Err()
 	if ctxErr == nil {
@@ -53,12 +66,17 @@ func contextProcessError(
 	if runErr != nil {
 		if errors.Is(runErr, ctxErr) ||
 			errors.Is(runErr, exec.ErrWaitDelay) ||
-			processErrIndicatesContextTermination(runErr) {
+			(tracker != nil &&
+				tracker.canceledByContext.Load() &&
+				processErrIndicatesContextTermination(runErr)) {
 			return ctxErr
 		}
 		return nil
 	}
-	if parseErr != nil && parseErrIndicatesClosedPipe(parseErr) {
+	if parseErr != nil &&
+		parseErrIndicatesClosedPipe(parseErr) &&
+		tracker != nil &&
+		tracker.canceledByContext.Load() {
 		return ctxErr
 	}
 	return nil
@@ -73,9 +91,6 @@ func processErrIndicatesContextTermination(err error) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return false
-	}
-	if exitErr.ExitCode() == -1 {
-		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "signal: killed") ||

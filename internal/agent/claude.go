@@ -134,7 +134,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	// Strip CLAUDECODE to prevent nested-session detection (#270),
 	// and handle API key (configured key or subscription auth).
@@ -167,7 +167,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, waitErr, err); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, waitErr, err); ctxErr != nil {
 			return "", ctxErr
 		}
 		// Build a detailed error including any partial output and stream errors
@@ -190,7 +190,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
-	if ctxErr := contextProcessError(ctx, nil, err); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, tracker, nil, err); ctxErr != nil {
 		return "", ctxErr
 	}
 

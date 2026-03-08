@@ -116,7 +116,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	// Pipe prompt via stdin
 	cmd.Stdin = strings.NewReader(prompt)
@@ -146,7 +146,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, waitErr, parseErr); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
 			return "", ctxErr
 		}
 		if parseErr != nil {
@@ -155,7 +155,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderr.String()))
 	}
 
-	if ctxErr := contextProcessError(ctx, nil, parseErr); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
 		return "", ctxErr
 	}
 

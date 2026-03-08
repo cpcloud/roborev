@@ -111,7 +111,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	var stderr bytes.Buffer
@@ -131,7 +131,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := a.parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, waitErr, err); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, tracker, waitErr, err); ctxErr != nil {
 			return "", ctxErr
 		}
 		if err != nil {
@@ -140,7 +140,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", waitErr, stderr.String())
 	}
 
-	if ctxErr := contextProcessError(ctx, nil, err); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, tracker, nil, err); ctxErr != nil {
 		return "", ctxErr
 	}
 

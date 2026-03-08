@@ -66,17 +66,19 @@ func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 func TestContextProcessError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	tracker := &subprocessTracker{}
+	tracker.canceledByContext.Store(true)
 
-	if got := contextProcessError(ctx, errors.New("agent failed"), nil); got != nil {
+	if got := contextProcessError(ctx, tracker, errors.New("agent failed"), nil); got != nil {
 		t.Fatalf("real subprocess error should be preserved, got context error %v", got)
 	}
-	if got := contextProcessError(ctx, exec.ErrWaitDelay, nil); !errors.Is(got, context.Canceled) {
+	if got := contextProcessError(ctx, tracker, exec.ErrWaitDelay, nil); !errors.Is(got, context.Canceled) {
 		t.Fatalf("expected context cancellation for wait delay, got %v", got)
 	}
-	if got := contextProcessError(ctx, nil, fs.ErrClosed); !errors.Is(got, context.Canceled) {
+	if got := contextProcessError(ctx, tracker, nil, fs.ErrClosed); !errors.Is(got, context.Canceled) {
 		t.Fatalf("expected context cancellation for closed pipe parse error, got %v", got)
 	}
-	if got := contextProcessError(ctx, errors.New("agent failed"), fs.ErrClosed); got != nil {
+	if got := contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed); got != nil {
 		t.Fatalf("real subprocess error should not be masked by closed pipe parse error, got %v", got)
 	}
 }
@@ -89,13 +91,31 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath)
-	configureSubprocess(cmd)
+	tracker := configureSubprocess(cmd)
 
 	err := cmd.Run()
 	if err == nil {
 		t.Fatal("expected command cancellation")
 	}
-	if got := contextProcessError(ctx, err, nil); !errors.Is(got, context.DeadlineExceeded) {
+	if got := contextProcessError(ctx, tracker, err, nil); !errors.Is(got, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v (run err: %v)", got, err)
+	}
+}
+
+func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) {
+	skipIfWindows(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "sh", "-c", "kill -KILL $$")
+	tracker := configureSubprocess(cmd)
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected signal exit")
+	}
+	cancel()
+
+	if got := contextProcessError(ctx, tracker, err, nil); got != nil {
+		t.Fatalf("signal exit should not be rewritten as context error, got %v (run err: %v)", got, err)
 	}
 }

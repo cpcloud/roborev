@@ -96,9 +96,6 @@ func runSingle(
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
 		backupAgent = config.ResolveBackupAgentForWorkflow(
 			cfg.RepoPath, cfg.GlobalConfig, workflow)
-		model = config.ResolveModelForWorkflow(
-			"", cfg.RepoPath,
-			cfg.GlobalConfig, workflow, cfg.Reasoning)
 	}
 
 	var resolvedAgent agent.Agent
@@ -114,6 +111,7 @@ func runSingle(
 			resolvedName, cfg.GlobalConfig, backupAgent)
 	}
 
+	usingBackup := false
 	// Use backup model when the backup agent was selected
 	if err == nil && cfg.GlobalConfig != nil && backupAgent != "" {
 		preferred := config.ResolveAgentForWorkflow(
@@ -121,9 +119,16 @@ func runSingle(
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
 		if agent.CanonicalName(resolvedAgent.Name()) == agent.CanonicalName(backupAgent) &&
 			agent.CanonicalName(resolvedAgent.Name()) != agent.CanonicalName(preferred) {
+			usingBackup = true
 			model = config.ResolveBackupModelForWorkflow(
 				cfg.RepoPath, cfg.GlobalConfig, workflow)
 		}
+	}
+	if err == nil && cfg.GlobalConfig != nil && model == "" && !usingBackup {
+		model = agent.ResolveWorkflowModelForAgent(
+			resolvedAgent.Name(), "", cfg.RepoPath,
+			cfg.GlobalConfig, workflow, cfg.Reasoning,
+		)
 	}
 
 	if err != nil {

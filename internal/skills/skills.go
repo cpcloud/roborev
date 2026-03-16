@@ -70,26 +70,10 @@ func IsInstalled(agent Agent) bool {
 	switch agent {
 	case AgentClaude:
 		skillsDir := filepath.Join(home, ".claude", "skills")
-		checkFiles = []string{
-			filepath.Join(skillsDir, "roborev-address", "SKILL.md"), // deprecated fallback
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review-branch", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md"),
-		}
+		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
 	case AgentCodex:
 		skillsDir := filepath.Join(home, ".codex", "skills")
-		checkFiles = []string{
-			filepath.Join(skillsDir, "roborev-address", "SKILL.md"), // deprecated fallback
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review-branch", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md"),
-		}
+		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
 	default:
 		return false
 	}
@@ -103,7 +87,38 @@ func IsInstalled(agent Agent) bool {
 	return false
 }
 
+// legacySkills lists skill directories that have been removed and
+// should be deleted from user machines during Update.
+var legacySkills = []string{
+	"roborev-address",
+}
+
+func currentSkillChecks(skillsDir string) []string {
+	names := []string{
+		"roborev-respond",
+		"roborev-fix",
+		"roborev-design-review",
+		"roborev-design-review-branch",
+		"roborev-review",
+		"roborev-review-branch",
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+	}
+	return out
+}
+
+func legacySkillChecks(skillsDir string) []string {
+	out := make([]string, len(legacySkills))
+	for i, n := range legacySkills {
+		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+	}
+	return out
+}
+
 // Update updates skills for agents that already have them installed
+// and removes legacy skills that are no longer shipped.
 func Update() ([]InstallResult, error) {
 	var results []InstallResult
 
@@ -124,6 +139,33 @@ func Update() ([]InstallResult, error) {
 	}
 
 	return results, nil
+}
+
+// removeLegacySkills deletes skill directories that are no longer
+// embedded in the binary.
+func removeLegacySkills(agent Agent) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
+	}
+
+	var skillsDir string
+	switch agent {
+	case AgentClaude:
+		skillsDir = filepath.Join(home, ".claude", "skills")
+	case AgentCodex:
+		skillsDir = filepath.Join(home, ".codex", "skills")
+	default:
+		return nil
+	}
+
+	for _, name := range legacySkills {
+		dir := filepath.Join(skillsDir, name)
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove legacy skill %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func installClaude() (InstallResult, error) {
@@ -186,6 +228,9 @@ func installClaude() (InstallResult, error) {
 		}
 	}
 
+	if err := removeLegacySkills(AgentClaude); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -249,13 +294,16 @@ func installCodex() (InstallResult, error) {
 		}
 	}
 
+	if err := removeLegacySkills(AgentCodex); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
 // SkillInfo describes an available skill.
 type SkillInfo struct {
-	DirName     string // e.g. "roborev-address"
-	Name        string // e.g. "roborev-address"
+	DirName     string // e.g. "roborev-fix"
+	Name        string // e.g. "roborev-fix"
 	Description string
 }
 
@@ -272,7 +320,7 @@ const (
 type AgentStatus struct {
 	Agent     Agent
 	Available bool                  // Whether the agent config dir exists
-	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-address")
+	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-fix")
 }
 
 // ListSkills returns metadata for all embedded skills (from the Claude skill set).

@@ -199,6 +199,16 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "FieldLabels/verdict label explicit PASS value",
+		output: "**Verdict**: PASS",
+		want:   VerdictPass,
+	},
+	{
+		name:   "FieldLabels/verdict label explicit FAIL value",
+		output: "**Verdict**: FAIL",
+		want:   VerdictFail,
+	},
+	{
 		name:   "FieldLabels/verdict label no space after colon",
 		output: "**Verdict**:No issues found.",
 		want:   VerdictPass,
@@ -522,6 +532,11 @@ var verdictTests = []verdictTestCase{
 	{
 		name:   "PassPhraseWins/historical broken path after pass is benign",
 		output: "Review #8609 roborev (codex: gpt-5.4)\nVerdict: Fail\n\nNo issues found. The guard on cmd.Flags().Changed(\"sha\") matches the intended behavior, and the added test exercises the previously broken quiet-mode path.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "PassPhraseWins/explicit fail label before later pass phrase is still pass",
+		output: "**Verdict**: FAIL\n\nNo issues found.",
 		want:   VerdictPass,
 	},
 	{

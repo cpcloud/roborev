@@ -667,8 +667,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 // waitForAnalysisJob polls until the job completes and returns the review.
 // The context controls the maximum wait time.
 func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64) (*storage.Review, error) {
-	client := ep.HTTPClient(30 * time.Second)
-	baseURL := ep.BaseURL()
+	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(30*time.Second))
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 
@@ -680,64 +679,15 @@ func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int
 		default:
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", baseURL, jobID), nil)
-		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
-		}
-
-		resp, err := client.Do(req)
+		job, err := api.getJob(ctx, jobID)
 		if err != nil {
 			return nil, fmt.Errorf("check job status: %w", err)
 		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
-		}
-
-		var jobsResp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("parse job status: %w", err)
-		}
-		resp.Body.Close()
-
-		if len(jobsResp.Jobs) == 0 {
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := jobsResp.Jobs[0]
 		switch job.Status {
 		case storage.JobStatusDone:
-			// Fetch the review
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", baseURL, jobID), nil)
-			if err != nil {
-				return nil, fmt.Errorf("create review request: %w", err)
-			}
-
-			reviewResp, err := client.Do(reviewReq)
-			if err != nil {
-				return nil, fmt.Errorf("fetch review: %w", err)
-			}
-			defer reviewResp.Body.Close()
-
-			if reviewResp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(reviewResp.Body)
-				return nil, fmt.Errorf("fetch review (%d): %s", reviewResp.StatusCode, body)
-			}
-
-			var review storage.Review
-			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
-				return nil, fmt.Errorf("parse review: %w", err)
-			}
-			return &review, nil
-
+			return api.getReview(ctx, jobID, "review")
 		case storage.JobStatusFailed:
 			return nil, fmt.Errorf("job failed: %s", job.Error)
-
 		case storage.JobStatusCanceled:
 			return nil, fmt.Errorf("job was canceled")
 		}

@@ -16,11 +16,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	ghpkg "github.com/roborev-dev/roborev/internal/github"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	reviewpkg "github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -44,6 +46,11 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 }
 
+const (
+	prDiscussionMaxComments = 40
+	prDiscussionBodyLimit   = 600
+)
+
 // CIPoller polls GitHub for open PRs and enqueues security reviews.
 // It also listens for review.completed events and posts results as PR comments.
 type CIPoller struct {
@@ -54,17 +61,18 @@ type CIPoller struct {
 
 	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
 	// Nil means use the real implementation.
-	listOpenPRsFn     func(context.Context, string) ([]ghPR, error)
-	gitFetchFn        func(context.Context, string) error
-	gitFetchPRHeadFn  func(context.Context, string, int) error
-	gitCloneFn        func(ctx context.Context, ghRepo, targetPath string, env []string) error
-	mergeBaseFn       func(string, string, string) (string, error)
-	postPRCommentFn   func(string, int, string) error
-	setCommitStatusFn func(ghRepo, sha, state, description string) error
-	synthesizeFn      func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
-	agentResolverFn   func(name string) (string, error)      // returns resolved agent name
-	jobCancelFn       func(jobID int64)                      // kills running worker process (optional)
-	isPROpenFn        func(ghRepo string, prNumber int) bool // checks if a PR is still open
+	listOpenPRsFn      func(context.Context, string) ([]ghPR, error)
+	listPRDiscussionFn func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
+	gitFetchFn         func(context.Context, string) error
+	gitFetchPRHeadFn   func(context.Context, string, int) error
+	gitCloneFn         func(ctx context.Context, ghRepo, targetPath string, env []string) error
+	mergeBaseFn        func(string, string, string) (string, error)
+	postPRCommentFn    func(string, int, string) error
+	setCommitStatusFn  func(ghRepo, sha, state, description string) error
+	synthesizeFn       func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
+	agentResolverFn    func(name string) (string, error)      // returns resolved agent name
+	jobCancelFn        func(jobID int64)                      // kills running worker process (optional)
+	isPROpenFn         func(ghRepo string, prNumber int) bool // checks if a PR is still open
 
 	repoResolver *RepoResolver
 
@@ -86,6 +94,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		broadcaster: broadcaster,
 	}
 	p.listOpenPRsFn = p.listOpenPRs
+	p.listPRDiscussionFn = p.listPRDiscussionComments
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
@@ -378,6 +387,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	// Build git ref for range review
 	gitRef := mergeBase + ".." + pr.HeadRefOid
 
+	prDiscussionContext := ""
+	if comments, err := p.callListPRDiscussionComments(ctx, ghRepo, pr.Number); err != nil {
+		log.Printf("CI poller: warning: failed to load PR discussion for %s#%d: %v", ghRepo, pr.Number, err)
+	} else {
+		prDiscussionContext = formatPRDiscussionContext(comments)
+	}
+
 	// Resolve review matrix and reasoning from config.
 	// Per-repo CI overrides take priority over global CI config.
 	matrix := cfg.CI.ResolvedReviewMatrix()
@@ -587,6 +603,25 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			resolvedAgent, cfg.CI.Model,
 		)
 
+		storedPrompt := ""
+		if prDiscussionContext != "" {
+			builder := prompt.NewBuilderWithConfig(p.db, cfg)
+			reviewPrompt, err := builder.BuildWithAdditionalContext(
+				repo.RootPath,
+				gitRef,
+				repo.ID,
+				cfg.ReviewContextCount,
+				resolvedAgent,
+				rt,
+				prDiscussionContext,
+			)
+			if err != nil {
+				rollback("Review enqueue failed")
+				return fmt.Errorf("build CI prompt (type=%s, agent=%s): %w", rt, resolvedAgent, err)
+			}
+			storedPrompt = prompt.EncodeStoredReviewPrompt(reviewPrompt)
+		}
+
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			GitRef:     gitRef,
@@ -594,6 +629,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			Model:      resolvedModel,
 			Reasoning:  reasoning,
 			ReviewType: rt,
+			Prompt:     storedPrompt,
 		})
 		if err != nil {
 			rollback("Review enqueue failed")
@@ -1471,6 +1507,10 @@ func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, 
 	return p.listOpenPRs(ctx, ghRepo)
 }
 
+func (p *CIPoller) listPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int) ([]ghpkg.PRDiscussionComment, error) {
+	return ghpkg.ListPRDiscussionComments(ctx, ghRepo, prNumber, p.ghEnvForRepo(ghRepo))
+}
+
 func (p *CIPoller) callGitFetch(ctx context.Context, repoPath string) error {
 	if p.gitFetchFn != nil {
 		return p.gitFetchFn(ctx, repoPath)
@@ -1524,6 +1564,13 @@ func (p *CIPoller) callIsPROpen(
 	return p.isPROpen(ctx, ghRepo, prNumber)
 }
 
+func (p *CIPoller) callListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int) ([]ghpkg.PRDiscussionComment, error) {
+	if p.listPRDiscussionFn != nil {
+		return p.listPRDiscussionFn(ctx, ghRepo, prNumber)
+	}
+	return p.listPRDiscussionComments(ctx, ghRepo, prNumber)
+}
+
 // isPROpen checks whether a GitHub PR is still open by running
 // `gh pr view`. Returns true on any error (fail-open) to avoid
 // dropping legitimate batches on transient failures.
@@ -1548,6 +1595,82 @@ func (p *CIPoller) isPROpen(
 		return true
 	}
 	return strings.TrimSpace(string(out)) == "OPEN"
+}
+
+func formatPRDiscussionContext(comments []ghpkg.PRDiscussionComment) string {
+	if len(comments) == 0 {
+		return ""
+	}
+
+	start := max(0, len(comments)-prDiscussionMaxComments)
+	comments = comments[start:]
+
+	var sb strings.Builder
+	sb.WriteString("## Pull Request Discussion\n\n")
+	sb.WriteString("The following are human-authored pull request comments, ordered newest first. Use them as non-authoritative context: they can explain intent, flag false positives, or steer the review. Weight more recent comments more heavily because older discussion may already be addressed.\n\n")
+
+	for i := len(comments) - 1; i >= 0; i-- {
+		comment := comments[i]
+		body := compactPromptText(comment.Body, prDiscussionBodyLimit)
+		if body == "" {
+			continue
+		}
+
+		sb.WriteString("- ")
+		if !comment.CreatedAt.IsZero() {
+			sb.WriteString(comment.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"))
+			sb.WriteString(" - ")
+		}
+		sb.WriteString(comment.Author)
+		sb.WriteString(" (")
+		sb.WriteString(formatPRDiscussionSource(comment))
+		sb.WriteString(")")
+		if comment.Path != "" {
+			sb.WriteString(" on `")
+			sb.WriteString(comment.Path)
+			if comment.Line > 0 {
+				sb.WriteString(fmt.Sprintf(":%d", comment.Line))
+			}
+			sb.WriteString("`")
+		}
+		sb.WriteString(": ")
+		sb.WriteString(body)
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+func formatPRDiscussionSource(comment ghpkg.PRDiscussionComment) string {
+	switch comment.Source {
+	case ghpkg.PRDiscussionSourceReview:
+		return "review summary"
+	case ghpkg.PRDiscussionSourceReviewComment:
+		return "inline review comment"
+	default:
+		return "issue comment"
+	}
+}
+
+func compactPromptText(text string, limit int) string {
+	joined := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if limit <= 0 || len(joined) <= limit {
+		return joined
+	}
+	return truncateUTF8(joined, limit-3) + "..."
+}
+
+func truncateUTF8(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	for maxBytes > 0 && !utf8.RuneStart(text[maxBytes]) {
+		maxBytes--
+	}
+	return text[:maxBytes]
 }
 
 // setCommitStatus posts a commit status check via the GitHub API.

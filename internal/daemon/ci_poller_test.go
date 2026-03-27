@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	ghpkg "github.com/roborev-dev/roborev/internal/github"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
@@ -1026,6 +1028,69 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 			return false
 		}, "reasoning=%q, want thorough (invalid should fall back to default)", jobs[0].Reasoning)
 	}
+}
+
+func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	testutil.InitTestGitRepo(t, h.RepoPath)
+	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, "followup.txt"), []byte("followup"), 0o644))
+	cmd := exec.Command("git", "-C", h.RepoPath, "add", "followup.txt")
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", h.RepoPath, "commit", "-m", "followup commit")
+	require.NoError(t, cmd.Run())
+
+	headSHA := testutil.GetHeadSHA(t, h.RepoPath)
+	baseSHABytes, err := exec.Command("git", "-C", h.RepoPath, "rev-parse", "HEAD^").Output()
+	require.NoError(t, err)
+	baseSHA := strings.TrimSpace(string(baseSHABytes))
+
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+	h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		return []ghpkg.PRDiscussionComment{
+			{
+				Author:    "alice",
+				Body:      "Earlier concern that was likely addressed.",
+				Source:    ghpkg.PRDiscussionSourceIssueComment,
+				CreatedAt: time.Date(2026, time.March, 24, 14, 0, 0, 0, time.UTC),
+			},
+			{
+				Author:    "bob",
+				Body:      "This nil case is intentional; don't flag it again.",
+				Source:    ghpkg.PRDiscussionSourceReviewComment,
+				Path:      "internal/daemon/ci_poller.go",
+				Line:      321,
+				CreatedAt: time.Date(2026, time.March, 27, 15, 30, 0, 0, time.UTC),
+			},
+		}, nil
+	}
+
+	err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 77, HeadRefOid: headSHA, BaseRefName: "main",
+	}, h.Cfg)
+	require.NoError(t, err)
+
+	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef(baseSHA+".."+headSHA))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+
+	decodedPrompt, ok := prompt.DecodeStoredReviewPrompt(jobs[0].Prompt)
+	require.True(t, ok, "expected CI poller to store a precomputed review prompt")
+	assert.Contains(t, decodedPrompt, "## Pull Request Discussion")
+	assert.Contains(t, decodedPrompt, "ordered newest first")
+	assert.Contains(t, decodedPrompt, "Weight more recent comments more heavily")
+	assert.Contains(t, decodedPrompt, "This nil case is intentional; don't flag it again.")
+	assert.Contains(t, decodedPrompt, "Earlier concern that was likely addressed.")
+	assert.Less(
+		t,
+		strings.Index(decodedPrompt, "This nil case is intentional; don't flag it again."),
+		strings.Index(decodedPrompt, "Earlier concern that was likely addressed."),
+		"newer comments should appear before older comments",
+	)
 }
 
 func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {

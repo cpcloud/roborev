@@ -27,6 +27,8 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
+const storedReviewPromptMarker = "<!-- roborev:stored-review-prompt -->\n"
+
 // SystemPromptSingle is the base instruction for single commit reviews
 const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
 
@@ -164,10 +166,16 @@ func (b *Builder) resolveExcludes(
 // Build constructs a review prompt for a commit or range with context from previous reviews.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
 func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+	return b.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, "")
+}
+
+// BuildWithAdditionalContext constructs a review prompt with an optional
+// caller-provided markdown context block inserted ahead of the current diff.
+func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
 	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
@@ -251,6 +259,24 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 
 func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
+}
+
+// EncodeStoredReviewPrompt marks a precomputed review prompt so workers can
+// distinguish it from prompts saved after runtime prompt construction.
+func EncodeStoredReviewPrompt(reviewPrompt string) string {
+	if reviewPrompt == "" {
+		return ""
+	}
+	return storedReviewPromptMarker + reviewPrompt
+}
+
+// DecodeStoredReviewPrompt returns the precomputed review prompt body when the
+// stored value was explicitly marked as an enqueue-time prompt override.
+func DecodeStoredReviewPrompt(stored string) (string, bool) {
+	if !strings.HasPrefix(stored, storedReviewPromptMarker) {
+		return "", false
+	}
+	return strings.TrimPrefix(stored, storedReviewPromptMarker), true
 }
 
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
@@ -447,7 +473,7 @@ func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
-func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	// Start with system prompt
 	promptType := "review"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -462,6 +488,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
+	b.writeAdditionalContext(&optionalContext, additionalContext)
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -564,7 +591,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 }
 
 // buildRangePrompt constructs a prompt for a commit range
-func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	// Start with system prompt for ranges
 	promptType := "range"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -579,6 +606,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
+	b.writeAdditionalContext(&optionalContext, additionalContext)
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -719,6 +747,14 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString(ProjectGuidelinesHeader)
 	sb.WriteString("\n")
 	sb.WriteString(strings.TrimSpace(guidelines))
+	sb.WriteString("\n\n")
+}
+
+func (b *Builder) writeAdditionalContext(sb *strings.Builder, additionalContext string) {
+	if strings.TrimSpace(additionalContext) == "" {
+		return
+	}
+	sb.WriteString(strings.TrimSpace(additionalContext))
 	sb.WriteString("\n\n")
 }
 

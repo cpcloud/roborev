@@ -380,7 +380,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	pb := prompt.NewBuilderWithConfig(wp.db, cfg)
 	var reviewPrompt string
 	var err error
-	if job.UsesStoredPrompt() && job.Prompt != "" {
+	if storedPrompt, ok := prompt.DecodeStoredReviewPrompt(job.Prompt); ok {
+		reviewPrompt = storedPrompt
+	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {

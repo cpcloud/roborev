@@ -51,6 +51,11 @@ type ghReviewComment struct {
 	User         ghCommentUser `json:"user"`
 }
 
+type ghCollaborator struct {
+	Login    string `json:"login"`
+	RoleName string `json:"role_name"`
+}
+
 // ListPRDiscussionComments returns human-authored pull request discussion
 // comments across top-level issue comments, review summaries, and inline review
 // comments. Results are sorted oldest-first.
@@ -129,6 +134,34 @@ func ListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int, 
 	})
 
 	return comments, nil
+}
+
+// ListTrustedRepoCollaborators returns collaborator logins that have effective
+// maintain or admin access to the repository. Logins are normalized to lower
+// case for case-insensitive matching against GitHub comment authors.
+func ListTrustedRepoCollaborators(ctx context.Context, ghRepo string, env []string) (map[string]struct{}, error) {
+	lines, err := ghAPIBase64Lines(ctx, fmt.Sprintf("repos/%s/collaborators?per_page=100&affiliation=all", ghRepo), env)
+	if err != nil {
+		return nil, err
+	}
+
+	trusted := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		var item ghCollaborator
+		if err := decodeBase64JSON(line, &item); err != nil {
+			return nil, fmt.Errorf("parse collaborator: %w", err)
+		}
+		login := strings.ToLower(strings.TrimSpace(item.Login))
+		if login == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(item.RoleName)) {
+		case "admin", "maintain":
+			trusted[login] = struct{}{}
+		}
+	}
+
+	return trusted, nil
 }
 
 func ghAPIBase64Lines(ctx context.Context, endpoint string, env []string) ([]string, error) {

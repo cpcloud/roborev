@@ -117,6 +117,18 @@ func TestHelperProcess(t *testing.T) {
 			},
 		})
 		os.Exit(0)
+	case "trusted_collaborators":
+		emitBase64Lines(map[string]any{
+			"login":     "alice",
+			"role_name": "admin",
+		}, map[string]any{
+			"login":     "bob",
+			"role_name": "maintain",
+		}, map[string]any{
+			"login":     "eve",
+			"role_name": "write",
+		})
+		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown action: %s", action)
 		os.Exit(2)
@@ -440,4 +452,14 @@ func TestListPRDiscussionComments_Error(t *testing.T) {
 	_, err := ListPRDiscussionComments(context.Background(), "owner/repo", 17, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gh api")
+}
+
+func TestListTrustedRepoCollaborators_FiltersToMaintainAndAdmin(t *testing.T) {
+	setExecCommand(t, helperCmd("trusted_collaborators"))
+
+	trusted, err := ListTrustedRepoCollaborators(context.Background(), "owner/repo", nil)
+	require.NoError(t, err)
+	require.Contains(t, trusted, "alice")
+	require.Contains(t, trusted, "bob")
+	require.NotContains(t, trusted, "eve")
 }

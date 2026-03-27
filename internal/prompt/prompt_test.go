@@ -68,6 +68,22 @@ func TestBuildPromptWithAdditionalContext(t *testing.T) {
 	assertContains(t, prompt, "Most recent human comment first.", "Prompt should contain additional context body")
 }
 
+func TestStoredReviewPromptEncodingRoundTrip(t *testing.T) {
+	encoded := EncodeStoredReviewPrompt("precomputed prompt")
+	require.Contains(t, encoded, "<roborev-stored-review-prompt>")
+	require.Contains(t, encoded, "</roborev-stored-review-prompt>")
+
+	decoded, ok := DecodeStoredReviewPrompt(encoded)
+	require.True(t, ok)
+	assert.Equal(t, "precomputed prompt", decoded)
+}
+
+func TestDecodeStoredReviewPrompt_LegacyMarker(t *testing.T) {
+	decoded, ok := DecodeStoredReviewPrompt("<!-- roborev:stored-review-prompt -->\nlegacy prompt")
+	require.True(t, ok)
+	assert.Equal(t, "legacy prompt", decoded)
+}
+
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 

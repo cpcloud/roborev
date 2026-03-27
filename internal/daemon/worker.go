@@ -379,6 +379,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// patterns are resolved consistently.
 	pb := prompt.NewBuilderWithConfig(wp.db, cfg)
 	var reviewPrompt string
+	promptToPersist := job.Prompt
 	var err error
 	if storedPrompt, ok := prompt.DecodeStoredReviewPrompt(job.Prompt); ok {
 		reviewPrompt = storedPrompt
@@ -407,9 +408,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))
 		return
 	}
+	if promptToPersist == "" {
+		promptToPersist = reviewPrompt
+	}
 
 	// Save the prompt so it can be viewed while job is running
-	if err := wp.db.SaveJobPrompt(job.ID, reviewPrompt); err != nil {
+	if err := wp.db.SaveJobPrompt(job.ID, promptToPersist); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 	}
 

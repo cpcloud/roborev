@@ -465,7 +465,10 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.Equal(t, "precomputed prompt", capturedPrompt)
-	assert.Equal(t, "precomputed prompt", updated.Prompt)
+	decodedPrompt, ok := prompt.DecodeStoredReviewPrompt(updated.Prompt)
+	require.True(t, ok)
+	assert.Equal(t, "precomputed prompt", decodedPrompt)
+	assert.Equal(t, prompt.EncodeStoredReviewPrompt("precomputed prompt"), updated.Prompt)
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {

@@ -17,7 +17,9 @@ import (
 // break out of an XML-like wrapper tag (e.g. </commit-message>).
 func escapeXML(s string) string {
 	var buf bytes.Buffer
-	xml.EscapeText(&buf, []byte(s))
+	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
+		return "--unescapable-xml--"
+	}
 	return buf.String()
 }
 

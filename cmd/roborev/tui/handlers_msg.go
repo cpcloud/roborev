@@ -734,11 +734,15 @@ func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 	m.loadingJobs = true
 	cmds := []tea.Cmd{
 		m.fetchJobs(),
-		m.fetchStatus(),
 		waitForSSE(m.sseCh, m.sseStop),
 	}
+	if cmd := m.startFetchStatus(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
-		cmds = append(cmds, m.fetchFixJobs())
+		if cmd := m.startFetchFixJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -752,9 +756,14 @@ func (m *model) consumeSSEPendingRefresh() tea.Cmd {
 	}
 	m.ssePendingRefresh = false
 	m.loadingJobs = true
-	cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
+	cmds := []tea.Cmd{m.fetchJobs()}
+	if cmd := m.startFetchStatus(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
-		cmds = append(cmds, m.fetchFixJobs())
+		if cmd := m.startFetchFixJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 	return tea.Batch(cmds...)
 }

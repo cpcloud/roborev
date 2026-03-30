@@ -572,6 +572,14 @@ func TestTUIFixJobsStaleFlagTriggersFollowUp(t *testing.T) {
 	m3, cmd := updateModel(t, m2, fixJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}})
 	assert.False(m3.loadingFixJobs, "should not re-dispatch without stale flag")
 	assert.Nil(cmd, "should return no command without stale flag")
+
+	// Error path should also honor the stale flag.
+	m.loadingFixJobs = true
+	m.fixJobsStale = true
+	m4, cmd := updateModel(t, m, fixJobsMsg{err: fmt.Errorf("connection refused")})
+	assert.True(m4.loadingFixJobs, "should re-dispatch on error when stale")
+	assert.False(m4.fixJobsStale, "stale flag should be cleared on error path")
+	assert.NotNil(cmd, "should return follow-up command on error path")
 }
 
 func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {

@@ -848,20 +848,19 @@ func (m model) handleTickMsg(
 	// Skip job refresh while pagination or another refresh is in flight
 	if m.loadingMore || m.loadingJobs {
 		cmds := []tea.Cmd{m.tick()}
-		if !m.loadingStatus {
-			m.loadingStatus = true
-			cmds = append(cmds, m.fetchStatus())
+		if cmd := m.startFetchStatus(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 		return m, tea.Batch(cmds...)
 	}
 	cmds := []tea.Cmd{m.tick(), m.fetchJobs()}
-	if !m.loadingStatus {
-		m.loadingStatus = true
-		cmds = append(cmds, m.fetchStatus())
+	if cmd := m.startFetchStatus(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
-	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) && !m.loadingFixJobs {
-		m.loadingFixJobs = true
-		cmds = append(cmds, m.fetchFixJobs())
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
+		if cmd := m.startFetchFixJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -953,14 +952,12 @@ func (m model) handleFixTriggerResultMsg(
 		), 3*time.Second, viewTasks)
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
-		m.loadingFixJobs = true
-		return m, m.fetchFixJobs()
+		return m, m.startFetchFixJobs()
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Fix job #%d enqueued", msg.job.ID,
 		), 3*time.Second, viewTasks)
-		m.loadingFixJobs = true
-		return m, m.fetchFixJobs()
+		return m, m.startFetchFixJobs()
 	}
 	return m, nil
 }
@@ -997,10 +994,11 @@ func (m model) handleApplyPatchResultMsg(
 			"Patch for job #%d doesn't apply cleanly"+
 				" - triggering rebase", msg.jobID,
 		), 5*time.Second, viewTasks)
-		m.loadingFixJobs = true
-		return m, tea.Batch(
-			m.triggerRebase(msg.jobID), m.fetchFixJobs(),
-		)
+		cmds := []tea.Cmd{m.triggerRebase(msg.jobID)}
+		if cmd := m.startFetchFixJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	} else if msg.commitFailed {
 		detail := fmt.Sprintf(
 			"Job #%d: %v", msg.jobID, msg.err,
@@ -1020,8 +1018,10 @@ func (m model) handleApplyPatchResultMsg(
 			"Patch from job #%d applied and committed",
 			msg.jobID,
 		), 3*time.Second, viewTasks)
-		m.loadingFixJobs = true
-		cmds := []tea.Cmd{m.fetchFixJobs()}
+		cmds := []tea.Cmd{}
+		if cmd := m.startFetchFixJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if msg.parentJobID > 0 {
 			cmds = append(
 				cmds,

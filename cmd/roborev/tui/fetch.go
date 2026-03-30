@@ -217,6 +217,16 @@ func (m model) fetchStatus() tea.Cmd {
 	}
 }
 
+// startFetchStatus dispatches fetchStatus if no status fetch is already
+// in flight, and sets the loadingStatus flag. Returns nil if skipped.
+func (m *model) startFetchStatus() tea.Cmd {
+	if m.loadingStatus {
+		return nil
+	}
+	m.loadingStatus = true
+	return m.fetchStatus()
+}
+
 func (m model) checkForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
@@ -819,4 +829,14 @@ func (m model) fetchFixJobs() tea.Cmd {
 		}
 		return fixJobsMsg{jobs: result.Jobs}
 	}
+}
+
+// startFetchFixJobs dispatches fetchFixJobs if no fix-jobs fetch is already
+// in flight, and sets the loadingFixJobs flag. Returns nil if skipped.
+func (m *model) startFetchFixJobs() tea.Cmd {
+	if m.loadingFixJobs {
+		return nil
+	}
+	m.loadingFixJobs = true
+	return m.fetchFixJobs()
 }

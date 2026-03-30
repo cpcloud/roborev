@@ -832,9 +832,10 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.loadingStatus = true
 	m.statusStale = false
 	cmds = append(cmds, m.fetchStatus())
+	m.loadingFixJobs = false
+	m.fixJobsStale = false
 	if m.tasksWorkflowEnabled() {
 		m.loadingFixJobs = true
-		m.fixJobsStale = false
 		cmds = append(cmds, m.fetchFixJobs())
 	}
 	if cmd := m.fetchUnloadedBranches(); cmd != nil {

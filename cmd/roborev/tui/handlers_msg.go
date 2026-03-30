@@ -822,9 +822,10 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		m.daemonVersion = msg.version
 	}
 	m.clearFetchFailed()
-	m.fetchGen++  // invalidate pre-reconnect status/fix-jobs responses
-	m.fetchSeq++  // invalidate pre-reconnect jobs responses
+	m.fetchGen++   // invalidate pre-reconnect status/fix-jobs responses
+	m.fetchSeq++   // invalidate pre-reconnect jobs responses
 	m.loadingJobs = true
+	m.loadingMore = false
 	cmds := []tea.Cmd{m.fetchJobs(), m.fetchRepoNames()}
 	// Force fetches on reconnect — previous in-flight requests
 	// were against the old connection and will fail or be stale.

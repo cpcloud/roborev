@@ -229,7 +229,10 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 // handleStatusMsg processes daemon status updates.
 func (m model) handleStatusMsg(msg statusMsg) (tea.Model, tea.Cmd) {
 	m.loadingStatus = false
-	m.status = storage.DaemonStatus(msg)
+	if msg.gen < m.fetchGen {
+		return m, nil // discard pre-reconnect response
+	}
+	m.status = msg.status
 	m.consecutiveErrors = 0
 	if m.status.Version != "" {
 		m.daemonVersion = m.status.Version
@@ -442,6 +445,9 @@ func (m model) handleFixJobsMsg(
 	msg fixJobsMsg,
 ) (tea.Model, tea.Cmd) {
 	m.loadingFixJobs = false
+	if msg.gen < m.fetchGen {
+		return m, nil // discard pre-reconnect response
+	}
 	if msg.err != nil {
 		m.err = msg.err
 	} else {
@@ -816,6 +822,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		m.daemonVersion = msg.version
 	}
 	m.clearFetchFailed()
+	m.fetchGen++ // invalidate pre-reconnect in-flight responses
 	m.loadingJobs = true
 	cmds := []tea.Cmd{m.fetchJobs(), m.fetchRepoNames()}
 	// Force fetches on reconnect — previous in-flight requests
@@ -954,6 +961,9 @@ func (m model) handleStatusErrMsg(
 	msg statusErrMsg,
 ) (tea.Model, tea.Cmd) {
 	m.loadingStatus = false
+	if msg.gen < m.fetchGen {
+		return m, nil // discard pre-reconnect error
+	}
 	m.err = msg.err
 	if m.statusStale {
 		m.statusStale = false

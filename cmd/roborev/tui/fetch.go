@@ -208,12 +208,13 @@ func (m model) fetchMoreJobs() tea.Cmd {
 }
 
 func (m model) fetchStatus() tea.Cmd {
+	gen := m.fetchGen
 	return func() tea.Msg {
 		var status storage.DaemonStatus
 		if err := m.getJSON("/api/status", &status); err != nil {
-			return statusErrMsg{err: err}
+			return statusErrMsg{err: err, gen: gen}
 		}
-		return statusMsg(status)
+		return statusMsg{status: status, gen: gen}
 	}
 }
 
@@ -831,6 +832,7 @@ func (m model) fetchPatch(jobID int64) tea.Cmd {
 
 // fetchFixJobs fetches fix jobs from the daemon.
 func (m model) fetchFixJobs() tea.Cmd {
+	gen := m.fetchGen
 	return func() tea.Msg {
 		params := neturl.Values{}
 		params.Set("job_type", "fix")
@@ -838,9 +840,9 @@ func (m model) fetchFixJobs() tea.Cmd {
 
 		result, err := m.loadJobsPage(params)
 		if err != nil {
-			return fixJobsMsg{err: err}
+			return fixJobsMsg{err: err, gen: gen}
 		}
-		return fixJobsMsg{jobs: result.Jobs}
+		return fixJobsMsg{jobs: result.Jobs, gen: gen}
 	}
 }
 

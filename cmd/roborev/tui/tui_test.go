@@ -777,9 +777,9 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Simulate receiving status with different version
-		status := statusMsg(storage.DaemonStatus{
+		status := statusMsg{status: storage.DaemonStatus{
 			Version: "different-version",
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status)
 
@@ -799,9 +799,9 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Simulate receiving status with same version as TUI
-		status := statusMsg(storage.DaemonStatus{
+		status := statusMsg{status: storage.DaemonStatus{
 			Version: version.Version,
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status)
 
@@ -916,10 +916,10 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
 		// First status fetch with a ConfigReloadCounter should NOT flash
-		status1 := statusMsg(storage.DaemonStatus{
+		status1 := statusMsg{status: storage.DaemonStatus{
 			Version:             "1.0.0",
 			ConfigReloadCounter: 1,
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status1)
 
@@ -947,10 +947,10 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m.lastConfigReloadCounter = 1
 
 		// Second status with different ConfigReloadCounter should flash
-		status2 := statusMsg(storage.DaemonStatus{
+		status2 := statusMsg{status: storage.DaemonStatus{
 			Version:             "1.0.0",
 			ConfigReloadCounter: 2,
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status2)
 
@@ -973,10 +973,10 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m.lastConfigReloadCounter = 0 // No reload had occurred
 
 		// Now config is reloaded
-		status := statusMsg(storage.DaemonStatus{
+		status := statusMsg{status: storage.DaemonStatus{
 			Version:             "1.0.0",
 			ConfigReloadCounter: 1,
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status)
 
@@ -993,10 +993,10 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m.lastConfigReloadCounter = 1
 
 		// Same counter
-		status := statusMsg(storage.DaemonStatus{
+		status := statusMsg{status: storage.DaemonStatus{
 			Version:             "1.0.0",
 			ConfigReloadCounter: 1,
-		})
+		}}
 
 		m2, _ := updateModel(t, m, status)
 
@@ -1093,7 +1093,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		{
 			name:             "resets error count on successful status fetch",
 			initialErrors:    5,
-			msg:              statusMsg(storage.DaemonStatus{Version: "1.0.0"}),
+			msg:              statusMsg{status: storage.DaemonStatus{Version: "1.0.0"}},
 			wantErrors:       0,
 			wantReconnecting: false,
 			wantCmd:          false,

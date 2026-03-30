@@ -127,7 +127,10 @@ type jobsMsg struct {
 	seq     int              // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
 	stats   storage.JobStats // aggregate counts from server
 }
-type statusMsg storage.DaemonStatus
+type statusMsg struct {
+	status storage.DaemonStatus
+	gen    uint64 // fetch generation — discard if < model.fetchGen
+}
 type reviewMsg struct {
 	review     *storage.Review
 	responses  []storage.Response // Responses for this review
@@ -167,7 +170,10 @@ type rerunResultMsg struct {
 	err           error
 }
 type errMsg error
-type statusErrMsg struct{ err error }
+type statusErrMsg struct {
+	err error
+	gen uint64
+}
 type configSaveErrMsg struct{ err error }
 type jobsErrMsg struct {
 	err error
@@ -225,6 +231,7 @@ type reconnectMsg struct {
 type fixJobsMsg struct {
 	jobs []storage.ReviewJob
 	err  error
+	gen  uint64 // fetch generation — discard if < model.fetchGen
 }
 
 type fixTriggerResultMsg struct {

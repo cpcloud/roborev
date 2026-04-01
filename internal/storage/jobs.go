@@ -57,6 +57,7 @@ type EnqueueOpts struct {
 	Prompt            string // For task jobs (pre-stored prompt)
 	OutputPrefix      string // Prefix to prepend to review output
 	Agentic           bool   // Allow file edits and command execution
+	PromptPrebuilt    bool   // Prompt is prebuilt and should be used as-is by the worker
 	Label             string // Display label in TUI for task jobs (default: "prompt")
 	JobType           string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
 	ParentJobID       int64  // Parent job being fixed (for fix jobs)
@@ -119,15 +120,20 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		parentJobIDParam = opts.ParentJobID
 	}
 
+	promptPrebuiltInt := 0
+	if opts.PromptPrebuilt {
+		promptPrebuiltInt = 1
+	}
+
 	result, err := db.Exec(`
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, requested_model, requested_provider, reasoning,
-			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
+			status, job_type, review_type, patch_id, diff_content, prompt, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
-		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
+		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt, promptPrebuiltInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
 		uid, machineID, nowStr, opts.WorktreePath)
 	if err != nil {
@@ -154,6 +160,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		EnqueuedAt:        now,
 		Prompt:            opts.Prompt,
 		Agentic:           opts.Agentic,
+		PromptPrebuilt:    opts.PromptPrebuilt,
 		OutputPrefix:      opts.OutputPrefix,
 		UUID:              uid,
 		SourceMachineID:   machineID,
@@ -207,7 +214,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var fields reviewJobScanFields
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status, j.enqueued_at,
-		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
+		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -216,7 +223,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		ORDER BY j.started_at DESC
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
-		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.JobType, &fields.ReviewType,
+		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.PromptPrebuilt, &fields.JobType, &fields.ReviewType,
 		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath)
 	if err != nil {
 		return nil, err
@@ -555,10 +562,16 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	nowStr := time.Now().Format(time.RFC3339)
 
 	// Reset job status and replace effective execution settings with the
-	// newly resolved values for this rerun.
+	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
+	// only for review jobs so they rebuild from current git/config state.
+	// Stored-prompt jobs (task, compact, fix, insights) keep their prompt
+	// since the worker needs it and cannot regenerate it from git.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?, updated_at = ?
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?,
+		    prompt_prebuilt = 0,
+		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
+		    updated_at = ?
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
 	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {

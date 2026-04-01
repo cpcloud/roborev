@@ -379,8 +379,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// patterns are resolved consistently.
 	pb := prompt.NewBuilderWithConfig(wp.db, cfg)
 	var reviewPrompt string
+	var promptToPersist string
+	storedPromptValue := job.Prompt
 	var err error
-	if job.UsesStoredPrompt() && job.Prompt != "" {
+	if job.PromptPrebuilt && storedPromptValue != "" {
+		// CI-enqueued review with prebuilt prompt (includes PR
+		// discussion context and system prompt). Use as-is so the
+		// discussion context survives retries and failover.
+		reviewPrompt = storedPromptValue
+		promptToPersist = storedPromptValue
+	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
@@ -388,6 +396,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		} else {
 			reviewPrompt = job.Prompt
 		}
+		promptToPersist = job.Prompt
 	} else if job.UsesStoredPrompt() {
 		// Prompt-native job (task/compact) with missing prompt — likely a
 		// daemon version mismatch or storage issue. Fail clearly instead
@@ -405,9 +414,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))
 		return
 	}
+	if promptToPersist == "" {
+		promptToPersist = reviewPrompt
+	}
 
 	// Save the prompt so it can be viewed while job is running
-	if err := wp.db.SaveJobPrompt(job.ID, reviewPrompt); err != nil {
+	if err := wp.db.SaveJobPrompt(job.ID, promptToPersist); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 	}
 
@@ -426,7 +438,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reasoning = "thorough"
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
+	// Disable agentic mode when the prompt contains external data
+	// (PR discussion) to prevent prompt-injection from influencing
+	// tool-capable agents. CI reviews are always non-agentic, but
+	// this guard defends against future callers setting the flag.
+	agentic := job.Agentic
+	if job.PromptPrebuilt {
+		agentic = false
+	}
+	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(agentic).WithModel(job.Model)
 	if job.SessionID != "" {
 		if !agent.IsValidResumeSessionID(job.SessionID) {
 			log.Printf("[%s] Ignoring invalid session_id for job %d", workerID, job.ID)

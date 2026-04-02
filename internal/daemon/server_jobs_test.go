@@ -6,6 +6,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2691,6 +2692,45 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 			job.Reasoning, "standard")
 
 	}
+}
+
+func TestHandleEnqueueUsesGlobalReviewReasoning(t *testing.T) {
+	dataDir := testenv.SetDataDir(t)
+	err := os.WriteFile(
+		filepath.Join(dataDir, "config.toml"),
+		[]byte(`review_reasoning = "maximum"`),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg, err := config.LoadGlobal()
+	require.NoError(t, err)
+	server := NewServer(db, cfg, config.GlobalConfigPath())
+
+	reqData := EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   "HEAD",
+		Agent:    "test",
+	}
+	req := testutil.MakeJSONRequest(
+		t, http.MethodPost, "/api/enqueue", reqData,
+	)
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	if w.Code != http.StatusCreated {
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+	assert.Equal(t, "maximum", job.Reasoning)
 }
 
 func TestHandleListJobsSlashNormalization(t *testing.T) {

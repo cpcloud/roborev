@@ -60,6 +60,9 @@ type Config struct {
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
 	DefaultBackupModel         string `toml:"default_backup_model"`
 	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
+	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning level for reviews: fast, standard, medium, thorough, or maximum."`
+	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning level for refine: fast, standard, medium, thorough, or maximum."`
+	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning level for fix: fast, standard, medium, thorough, or maximum."`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -1399,7 +1402,7 @@ func SeverityInstruction(minSeverity string) string {
 }
 
 // ResolveReviewReasoning determines reasoning level for reviews.
-// Priority: explicit > per-repo config > default (thorough)
+// Priority: explicit > per-repo config > global config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
@@ -1409,11 +1412,15 @@ func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 
+	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
+		return NormalizeReasoning(globalCfg.ReviewReasoning)
+	}
+
 	return "thorough", nil // Default for reviews: deep analysis
 }
 
 // ResolveRefineReasoning determines reasoning level for refine.
-// Priority: explicit > per-repo config > default (standard)
+// Priority: explicit > per-repo config > global config > default (standard)
 func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
@@ -1423,11 +1430,15 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 		return NormalizeReasoning(repoCfg.RefineReasoning)
 	}
 
+	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.RefineReasoning) != "" {
+		return NormalizeReasoning(globalCfg.RefineReasoning)
+	}
+
 	return "standard", nil // Default for refine: balanced analysis
 }
 
 // ResolveFixReasoning determines reasoning level for fix.
-// Priority: explicit > per-repo config > default (standard)
+// Priority: explicit > per-repo config > global config > default (standard)
 func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
@@ -1435,6 +1446,10 @@ func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
 		return NormalizeReasoning(repoCfg.FixReasoning)
+	}
+
+	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.FixReasoning) != "" {
+		return NormalizeReasoning(globalCfg.FixReasoning)
 	}
 
 	return "standard", nil // Default for fix: balanced analysis

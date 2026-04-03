@@ -802,6 +802,16 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	return &cfg, nil
 }
 
+// ValidateRepoConfig returns any repo-config load or parse error for repoPath.
+// Missing repo config is treated as valid.
+func ValidateRepoConfig(repoPath string) error {
+	if strings.TrimSpace(repoPath) == "" {
+		return nil
+	}
+	_, err := LoadRepoConfig(repoPath)
+	return err
+}
+
 // ResolvePostCommitReview returns the post-commit review mode for a repo.
 // Returns "branch" when configured, otherwise "commit" (the default).
 func ResolvePostCommitReview(repoPath string) string {

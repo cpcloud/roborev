@@ -368,6 +368,7 @@ func TestResolveReasoning(t *testing.T) {
 				{"explicit normalization", "FAST", "", "", "fast", false},
 				{"invalid explicit", "unknown", "", "", "", true},
 				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", "", true},
+				{"malformed repo config does not fall back to global", "", fmt.Sprintf(`%s = [`, configKey), fmt.Sprintf(`%s = "%s"`, configKey, repoVal), "", true},
 				{"invalid global config", "", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", true},
 			}
 

@@ -1408,7 +1408,11 @@ func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config)
 		return NormalizeReasoning(explicit)
 	}
 
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 
@@ -1426,7 +1430,11 @@ func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config)
 		return NormalizeReasoning(explicit)
 	}
 
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineReasoning) != "" {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.RefineReasoning) != "" {
 		return NormalizeReasoning(repoCfg.RefineReasoning)
 	}
 
@@ -1444,7 +1452,11 @@ func ResolveFixReasoning(explicit string, repoPath string, globalCfg *Config) (s
 		return NormalizeReasoning(explicit)
 	}
 
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
 		return NormalizeReasoning(repoCfg.FixReasoning)
 	}
 

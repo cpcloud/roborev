@@ -348,7 +348,7 @@ func TestResolveJobTimeout(t *testing.T) {
 }
 
 func TestResolveReasoning(t *testing.T) {
-	type resolverFunc func(explicit string, dir string) (string, error)
+	type resolverFunc func(explicit string, dir string, globalCfg *Config) (string, error)
 
 	runTests := func(t *testing.T, name string, fn resolverFunc, configKey, defaultVal, repoVal string) {
 		t.Run(name, func(t *testing.T) {
@@ -383,8 +383,14 @@ func TestResolveReasoning(t *testing.T) {
 						)
 						require.NoError(t, err)
 					}
+					var globalCfg *Config
+					if tt.globalConfig != "" {
+						cfg, loadErr := LoadGlobalFrom(filepath.Join(dataDir, "config.toml"))
+						require.NoError(t, loadErr)
+						globalCfg = cfg
+					}
 					tmpDir := newTempRepo(t, tt.repoConfig)
-					got, err := fn(tt.explicit, tmpDir)
+					got, err := fn(tt.explicit, tmpDir, globalCfg)
 					if (err != nil) != tt.wantErr {
 						assert.Condition(t, func() bool {
 							return false
@@ -415,7 +421,7 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 		"fix_agent_fast":     "gemini",
 	})
 
-	reasoning, err := ResolveFixReasoning("", tmpDir)
+	reasoning, err := ResolveFixReasoning("", tmpDir, nil)
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "ResolveFixReasoning: %v", err)

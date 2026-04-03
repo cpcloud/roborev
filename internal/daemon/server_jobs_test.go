@@ -2694,10 +2694,12 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	}
 }
 
-func TestHandleEnqueueUsesGlobalReviewReasoning(t *testing.T) {
-	dataDir := testenv.SetDataDir(t)
+func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
+	_ = testenv.SetDataDir(t)
+
+	configPath := filepath.Join(t.TempDir(), "daemon-config.toml")
 	err := os.WriteFile(
-		filepath.Join(dataDir, "config.toml"),
+		configPath,
 		[]byte(`review_reasoning = "maximum"`),
 		0o644,
 	)
@@ -2707,9 +2709,9 @@ func TestHandleEnqueueUsesGlobalReviewReasoning(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg, err := config.LoadGlobal()
+	cfg, err := config.LoadGlobalFrom(configPath)
 	require.NoError(t, err)
-	server := NewServer(db, cfg, config.GlobalConfigPath())
+	server := NewServer(db, cfg, configPath)
 
 	reqData := EnqueueRequest{
 		RepoPath: repoDir,

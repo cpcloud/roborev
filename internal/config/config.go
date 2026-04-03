@@ -1403,7 +1403,7 @@ func SeverityInstruction(minSeverity string) string {
 
 // ResolveReviewReasoning determines reasoning level for reviews.
 // Priority: explicit > per-repo config > global config > default (thorough)
-func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
+func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
 	}
@@ -1412,7 +1412,7 @@ func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 
-	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(globalCfg.ReviewReasoning)
 	}
 
@@ -1421,7 +1421,7 @@ func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 
 // ResolveRefineReasoning determines reasoning level for refine.
 // Priority: explicit > per-repo config > global config > default (standard)
-func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
+func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
 	}
@@ -1430,7 +1430,7 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 		return NormalizeReasoning(repoCfg.RefineReasoning)
 	}
 
-	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.RefineReasoning) != "" {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.RefineReasoning) != "" {
 		return NormalizeReasoning(globalCfg.RefineReasoning)
 	}
 
@@ -1439,7 +1439,7 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 
 // ResolveFixReasoning determines reasoning level for fix.
 // Priority: explicit > per-repo config > global config > default (standard)
-func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
+func ResolveFixReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeReasoning(explicit)
 	}
@@ -1448,7 +1448,7 @@ func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 		return NormalizeReasoning(repoCfg.FixReasoning)
 	}
 
-	if globalCfg, err := LoadGlobal(); err == nil && globalCfg != nil && strings.TrimSpace(globalCfg.FixReasoning) != "" {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.FixReasoning) != "" {
 		return NormalizeReasoning(globalCfg.FixReasoning)
 	}
 

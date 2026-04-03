@@ -754,23 +754,39 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 		resolutionPath = worktreePath
 	}
 
-	provider := strings.TrimSpace(job.RequestedProvider)
-	if model := strings.TrimSpace(job.RequestedModel); model != "" {
-		return model, provider, nil
-	}
-
 	workflow := workflowForJob(job.JobType, job.ReviewType)
-	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
-		return "", "", fmt.Errorf("resolve workflow config: %w", err)
-	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
+	if err := validateRerunAgent(job.Agent, cfg); err != nil {
+		return "", "", err
+	}
+
+	provider := strings.TrimSpace(job.RequestedProvider)
+	if model := strings.TrimSpace(job.RequestedModel); model != "" {
+		return model, provider, nil
+	}
+
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
 	model := resolution.ModelForSelectedAgent(job.Agent, "")
 	return model, provider, nil
+}
+
+func validateRerunAgent(agentName string, cfg *config.Config) error {
+	_, err := agent.GetAvailableWithConfig(agentName, cfg)
+	if err != nil {
+		var unknownErr *agent.UnknownAgentError
+		if errors.As(err, &unknownErr) {
+			return fmt.Errorf("invalid agent: %w", err)
+		}
+		return fmt.Errorf("no agent available: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {

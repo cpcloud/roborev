@@ -605,6 +605,28 @@ func TestResolveRerunModelProviderPreservesRequestedOverridesOnInvalidConfig(t *
 	assert.Equal(t, "anthropic", provider)
 }
 
+func TestResolveRerunModelProviderRejectsInvalidAgentWithRequestedOverrides(t *testing.T) {
+	mainRepo := t.TempDir()
+
+	job := &storage.ReviewJob{
+		Agent:             "missing-agent",
+		JobType:           storage.JobTypeReview,
+		ReviewType:        config.ReviewTypeDefault,
+		Reasoning:         "thorough",
+		RepoPath:          mainRepo,
+		RequestedModel:    "requested-model",
+		RequestedProvider: "anthropic",
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `invalid agent: unknown agent "missing-agent"`)
+	assert.Empty(t, model)
+	assert.Empty(t, provider)
+}
+
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestHandleAddCommentToJobStates(t *testing.T) {

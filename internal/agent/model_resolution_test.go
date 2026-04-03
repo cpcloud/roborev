@@ -282,7 +282,10 @@ func TestResolveWorkflowConfigModelForSelectedAgent_UsesBackupModelForAliasMatch
 		ReviewBackupModel: "claude-sonnet",
 	}
 
-	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+	resolution, err := ResolveWorkflowConfig(
+		"", t.TempDir(), cfg, "review", "standard",
+	)
+	require.NoError(t, err)
 
 	require.Equal(t, "gemini", resolution.PreferredAgent)
 	require.Equal(t, "claude", resolution.BackupAgent)
@@ -299,7 +302,28 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 		ReviewBackupAgent: "claude",
 	}
 
-	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+	resolution, err := ResolveWorkflowConfig(
+		"", t.TempDir(), cfg, "review", "standard",
+	)
+	require.NoError(t, err)
 
 	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
+}
+
+func TestResolveWorkflowConfigIgnoresMalformedRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	repoPath := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_model = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	resolution, err := ResolveWorkflowConfig("", repoPath, &config.Config{
+		ReviewAgent: "gemini",
+	}, "review", "fast")
+	require.NoError(t, err)
+	require.Equal(t, "gemini", resolution.PreferredAgent)
 }

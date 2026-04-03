@@ -734,16 +734,38 @@ func workflowForJob(jobType, reviewType string) string {
 	return workflow
 }
 
-func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string) {
+func validatedWorktreePath(worktreePath, repoPath string) string {
+	if worktreePath == "" {
+		return ""
+	}
+	if !git.ValidateWorktreeForRepo(worktreePath, repoPath) {
+		return ""
+	}
+	return worktreePath
+}
+
+func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolutionPath := job.RepoPath
-	if strings.TrimSpace(job.WorktreePath) != "" {
-		resolutionPath = job.WorktreePath
+	if job.WorktreePath != "" {
+		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
+		if worktreePath == "" {
+			return "", "", fmt.Errorf("rerun job worktree path is stale or invalid")
+		}
+		resolutionPath = worktreePath
 	}
-	resolution := agent.ResolveWorkflowConfig("", resolutionPath, cfg, workflow, job.Reasoning)
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	resolution, err := agent.ResolveWorkflowConfig(
+		"", resolutionPath, cfg, workflow, job.Reasoning,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
 	model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
 	provider := strings.TrimSpace(job.RequestedProvider)
-	return model, provider
+	return model, provider, nil
 }
 
 func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
@@ -879,9 +901,17 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	requestedProvider := strings.TrimSpace(req.Provider)
 
 	// Resolve agent for workflow at this reasoning level
-	resolution := agent.ResolveWorkflowConfig(
+	if err := config.ValidateRepoConfig(repoRoot); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
+	resolution, err := agent.ResolveWorkflowConfig(
 		req.Agent, repoRoot, cfg, workflow, reasoning,
 	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
 	agentName := resolution.PreferredAgent
 
 	// Resolve to an installed agent: if the configured agent isn't available,
@@ -1825,7 +1855,13 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	model, provider := resolveRerunModelProvider(job, s.configWatcher.Config())
+	model, provider, err := resolveRerunModelProvider(
+		job, s.configWatcher.Config(),
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := s.db.ReenqueueJob(req.JobID, storage.ReenqueueOpts{Model: model, Provider: provider}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2455,10 +2491,31 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
-	reasoning := "standard"
-	resolution := agent.ResolveWorkflowConfig(
-		"", parentJob.RepoPath, cfg, "fix", reasoning,
+	resolutionPath := parentJob.RepoPath
+	worktreePath := validatedWorktreePath(parentJob.WorktreePath, parentJob.RepoPath)
+	if parentJob.WorktreePath != "" && worktreePath == "" {
+		writeError(w, http.StatusBadRequest, "parent job worktree path is stale or invalid")
+		return
+	}
+	if worktreePath != "" {
+		resolutionPath = worktreePath
+	}
+	reasoning, err := config.ResolveFixReasoning("", resolutionPath, cfg)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
+	resolution, err := agent.ResolveWorkflowConfig(
+		"", resolutionPath, cfg, "fix", reasoning,
 	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
 	agentName := resolution.PreferredAgent
 	if resolved, err := agent.GetAvailableWithConfig(
 		agentName, cfg, resolution.BackupAgent,
@@ -2521,7 +2578,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		Label:        fmt.Sprintf("fix #%d", req.ParentJobID),
 		JobType:      storage.JobTypeFix,
 		ParentJobID:  req.ParentJobID,
-		WorktreePath: parentJob.WorktreePath,
+		WorktreePath: worktreePath,
 	})
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("enqueue fix job: %v", err))

@@ -383,11 +383,17 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	if !config.IsDefaultReviewType(reviewType) {
 		workflow = reviewType
 	}
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return fmt.Errorf("resolve workflow config: %w", err)
+	}
 
 	// Resolve agent/model preferences (matches daemon behavior).
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		agentName, repoPath, cfg, workflow, reasoning,
 	)
+	if err != nil {
+		return fmt.Errorf("resolve workflow config: %w", err)
+	}
 
 	// Get the agent (try backup before hardcoded chain)
 	a, err := agent.GetAvailableWithConfig(

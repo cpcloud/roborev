@@ -597,14 +597,46 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		require.Equal(t, commit.Subject, stored.CommitSubject)
 	})
 
+	t.Run("fix job uses configured fix reasoning", func(t *testing.T) {
+		origReasoning := server.configWatcher.Config().FixReasoning
+		server.configWatcher.Config().FixReasoning = "maximum"
+		t.Cleanup(func() {
+			server.configWatcher.Config().FixReasoning = origReasoning
+		})
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		require.Equal(t, "maximum", fixJob.Reasoning)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err, "GetJobByID(%d)", fixJob.ID)
+		require.Equal(t, "maximum", stored.Reasoning)
+	})
+
 	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
+		worktreePath := filepath.Join(tmpDir, "worktrees", "feature")
+		worktreeAdd := exec.Command(
+			"git", "-C", fixture.repoDir,
+			"worktree", "add", "--detach", worktreePath, "HEAD",
+		)
+		out, err := worktreeAdd.CombinedOutput()
+		require.NoError(t, err, "git worktree add failed: %s", out)
+
 		// Enqueue a review with a worktree path
 		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:       repo.ID,
 			CommitID:     commit.ID,
 			GitRef:       "fix-val-abc",
 			Agent:        "test",
-			WorktreePath: filepath.Join(tmpDir, "worktrees", "feature"),
+			WorktreePath: worktreePath,
 		})
 		require.NoError(t, err)
 
@@ -635,10 +667,107 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 		stored, err := db.GetJobByID(fixJob.ID)
 		require.NoError(t, err)
-		require.Equal(t,
-			filepath.Join(tmpDir, "worktrees", "feature"),
-			stored.WorktreePath,
+		require.Equal(t, worktreePath, stored.WorktreePath)
+	})
+
+	t.Run("fix job uses worktree config when present", func(t *testing.T) {
+		worktreePath := filepath.Join(tmpDir, "worktrees", "feature-config")
+		worktreeAdd := exec.Command(
+			"git", "-C", fixture.repoDir,
+			"worktree", "add", "--detach", worktreePath, "HEAD",
 		)
+		out, err := worktreeAdd.CombinedOutput()
+		require.NoError(t, err, "git worktree add failed: %s", out)
+		require.NoError(t, os.WriteFile(
+			filepath.Join(worktreePath, ".roborev.toml"),
+			[]byte("fix_reasoning = \"maximum\"\nfix_model = \"worktree-model\"\n"),
+			0o644,
+		))
+
+		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "fix-val-abc",
+			Agent:        "test",
+			WorktreePath: worktreePath,
+		})
+		require.NoError(t, err)
+
+		for {
+			claimed, claimErr := db.ClaimJob("w-wt-fix-config")
+			require.NoError(t, claimErr)
+			require.NotNil(t, claimed)
+			if claimed.ID == wtJob.ID {
+				break
+			}
+			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "PASS"))
+		}
+		require.NoError(t, db.CompleteJob(
+			wtJob.ID, "test", "prompt", "FAIL: issues found",
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: wtJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		require.Equal(t, "maximum", fixJob.Reasoning)
+		require.Equal(t, "worktree-model", fixJob.Model)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		require.Equal(t, "maximum", stored.Reasoning)
+		require.Equal(t, "worktree-model", stored.Model)
+		require.Equal(t, worktreePath, stored.WorktreePath)
+	})
+
+	t.Run("fix job with invalid worktree path is rejected", func(t *testing.T) {
+		stalePath := filepath.Join(tmpDir, "worktrees", "stale-config")
+		require.NoError(t, os.MkdirAll(stalePath, 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(stalePath, ".roborev.toml"),
+			[]byte("fix_reasoning = \"maximum\"\nfix_model = \"stale-model\"\n"),
+			0o644,
+		))
+
+		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "fix-val-abc",
+			Agent:        "test",
+			WorktreePath: stalePath,
+		})
+		require.NoError(t, err)
+
+		for {
+			claimed, claimErr := db.ClaimJob("w-wt-fix-stale")
+			require.NoError(t, claimErr)
+			require.NotNil(t, claimed)
+			if claimed.ID == wtJob.ID {
+				break
+			}
+			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "PASS"))
+		}
+		require.NoError(t, db.CompleteJob(
+			wtJob.ID, "test", "prompt", "FAIL: issues found",
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: wtJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusBadRequest)
+
+		var resp ErrorResponse
+		testutil.DecodeJSON(t, w, &resp)
+		assert.Contains(t, resp.Error, "parent job worktree path is stale or invalid")
 	})
 
 	t.Run("custom prompt includes review context", func(t *testing.T) {

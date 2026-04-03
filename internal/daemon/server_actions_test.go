@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -408,6 +409,49 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 	})
 
+	t.Run("rerun with invalid worktree path fails", func(t *testing.T) {
+		repoDir := filepath.Join(tmpDir, "rerun-invalid-worktree")
+		testutil.InitTestGitRepo(t, repoDir)
+
+		repo, err := db.GetOrCreateRepo(repoDir)
+		require.NoError(t, err)
+		commit, err := db.GetOrCreateCommit(repo.ID, "rerun-stale-worktree", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		job, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "rerun-stale-worktree",
+			Agent:        "test",
+			WorktreePath: filepath.Join(tmpDir, "stale-worktree"),
+		})
+		require.NoError(t, err)
+
+		for {
+			claimed, err := db.ClaimJob("worker-stale-rerun")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			if claimed.ID == job.ID {
+				break
+			}
+			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "output"))
+		}
+		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+
+		var resp ErrorResponse
+		testutil.DecodeJSON(t, w, &resp)
+		assert.Contains(t, resp.Error, "rerun job worktree path is stale or invalid")
+
+		updated, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusDone, updated.Status)
+	})
+
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: 99999})
 		w := httptest.NewRecorder()
@@ -458,7 +502,13 @@ func TestWorkflowForJobFixType(t *testing.T) {
 
 func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
-	worktreeRepo := t.TempDir()
+	testutil.InitTestGitRepo(t, mainRepo)
+	worktreeRepo := filepath.Join(t.TempDir(), "worktree")
+	worktreeAdd := exec.Command(
+		"git", "-C", mainRepo, "worktree", "add", "--detach", worktreeRepo, "HEAD",
+	)
+	out, err := worktreeAdd.CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %s", out)
 
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(worktreeRepo, ".roborev.toml"), []byte("review_model = \"worktree-model\"\n"), 0o644))
@@ -472,8 +522,36 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 		WorktreePath: worktreeRepo,
 	}
 
-	model, provider := resolveRerunModelProvider(job, config.DefaultConfig())
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.NoError(t, err)
 	assert.Equal(t, "worktree-model", model)
+	assert.Empty(t, provider)
+}
+
+func TestResolveRerunModelProviderRejectsInvalidWorktreeConfig(t *testing.T) {
+	mainRepo := t.TempDir()
+	stalePath := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stalePath, ".roborev.toml"), []byte("review_model = \"stale-model\"\n"), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:        "test",
+		JobType:      storage.JobTypeReview,
+		ReviewType:   config.ReviewTypeDefault,
+		Reasoning:    "thorough",
+		RepoPath:     mainRepo,
+		WorktreePath: stalePath,
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "rerun job worktree path is stale or invalid")
+	assert.Empty(t, model)
 	assert.Empty(t, provider)
 }
 

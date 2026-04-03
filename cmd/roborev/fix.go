@@ -303,13 +303,19 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 func resolveFixModel(
 	selectedAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
-) string {
-	resolution := agent.ResolveWorkflowConfig(
+) (string, error) {
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return "", err
+	}
+	resolution, err := agent.ResolveWorkflowConfig(
 		"", repoPath, cfg, "fix", reasoning,
 	)
+	if err != nil {
+		return "", err
+	}
 	return resolution.ModelForSelectedAgent(
 		selectedAgent, cliModel,
-	)
+	), nil
 }
 
 // resolveFixAgent resolves and configures the agent for fix operations.
@@ -323,10 +329,16 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
 	}
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return nil, fmt.Errorf("resolve workflow config: %w", err)
+	}
 
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		opts.agentName, repoPath, cfg, "fix", reasoning,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow config: %w", err)
+	}
 
 	a, err := agent.GetAvailableWithConfig(
 		resolution.PreferredAgent, cfg, resolution.BackupAgent,

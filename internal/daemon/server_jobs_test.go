@@ -2712,6 +2712,9 @@ func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
 	cfg, err := config.LoadGlobalFrom(configPath)
 	require.NoError(t, err)
 	server := NewServer(db, cfg, configPath)
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
 
 	reqData := EnqueueRequest{
 		RepoPath: repoDir,

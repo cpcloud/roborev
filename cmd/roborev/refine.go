@@ -348,7 +348,10 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	}
 
 	// Resolve reasoning level from CLI or config (default: standard for refine)
-	cfg, _ := config.LoadGlobal()
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	resolvedReasoning, err := config.ResolveRefineReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
 		return err

@@ -59,6 +59,7 @@ type CIPoller struct {
 	gitFetchPRHeadFn  func(context.Context, string, int) error
 	gitCloneFn        func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn       func(string, string, string) (string, error)
+	loadRepoConfigFn  func(string) (*config.RepoConfig, error)
 	postPRCommentFn   func(string, int, string) error
 	setCommitStatusFn func(ghRepo, sha, state, description string) error
 	synthesizeFn      func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
@@ -89,6 +90,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
+	p.loadRepoConfigFn = loadCIRepoConfig
 	p.postPRCommentFn = p.postPRComment
 	p.synthesizeFn = p.synthesizeBatchResults
 	p.repoResolver = &RepoResolver{}
@@ -383,8 +385,15 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	matrix := cfg.CI.ResolvedReviewMatrix()
 	reasoning := "thorough"
 
-	repoCfg, repoCfgErr := loadCIRepoConfig(repo.RootPath)
+	loadRepoConfig := p.loadRepoConfigFn
+	if loadRepoConfig == nil {
+		loadRepoConfig = loadCIRepoConfig
+	}
+	repoCfg, repoCfgErr := loadRepoConfig(repo.RootPath)
 	if repoCfgErr != nil {
+		if !config.IsConfigParseError(repoCfgErr) {
+			return fmt.Errorf("load repo config: %w", repoCfgErr)
+		}
 		// CI review intentionally falls back to global/default settings so a
 		// broken repo override does not disable PR review entirely.
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)

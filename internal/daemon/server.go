@@ -745,6 +745,10 @@ func validatedWorktreePath(worktreePath, repoPath string) string {
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
+	if err := validateRerunAgent(job.Agent, cfg); err != nil {
+		return "", "", err
+	}
+
 	resolutionPath := job.RepoPath
 	if job.WorktreePath != "" {
 		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
@@ -754,20 +758,17 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 		resolutionPath = worktreePath
 	}
 
+	provider := strings.TrimSpace(job.RequestedProvider)
+	if model := strings.TrimSpace(job.RequestedModel); model != "" {
+		return model, provider, nil
+	}
+
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
-	}
-	if err := validateRerunAgent(job.Agent, cfg); err != nil {
-		return "", "", err
-	}
-
-	provider := strings.TrimSpace(job.RequestedProvider)
-	if model := strings.TrimSpace(job.RequestedModel); model != "" {
-		return model, provider, nil
 	}
 
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {

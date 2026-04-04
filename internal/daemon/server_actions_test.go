@@ -582,10 +582,10 @@ func TestResolveRerunModelProviderRejectsInvalidWorktreeWithRequestedOverrides(t
 	assert.Empty(t, provider)
 }
 
-func TestResolveRerunModelProviderPreservesRequestedOverridesOnInvalidConfig(t *testing.T) {
+func TestResolveRerunModelProviderPreservesRequestedOverridesOnParseableInvalidConfig(t *testing.T) {
 	mainRepo := t.TempDir()
 
-	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = ["), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_reasoning = \"bogus\"\n"), 0o644))
 
 	job := &storage.ReviewJob{
 		Agent:             "test",

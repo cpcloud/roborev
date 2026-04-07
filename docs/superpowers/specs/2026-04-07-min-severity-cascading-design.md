@@ -96,7 +96,7 @@ Refine and fix follow the identical shape, just reading their respective fields.
 | `cmd/roborev/fix.go:1013` (`runFixBatch`) | `cfg` is currently loaded at line 1030 (after the resolver call). Move the `cfg, _ := config.LoadGlobal()` call up before line 1013 and pass into `ResolveFixMinSeverity`. |
 | `cmd/roborev/review.go` | New `--min-severity` flag — validates via `NormalizeMinSeverity`, sends the **canonical lowercase return value** (NOT the raw user input) as `min_severity` in the `EnqueueRequest` POST body. Does NOT call the resolver for the daemon path — see §4. For `--local` mode: `runLocalReview` gains a `minSeverity string` parameter, calls `config.ResolveReviewMinSeverity(flag, repoPath, cfg)` (fail-fast on error), and passes the result into `pb.Build`/`pb.BuildDirty`. |
 | `internal/daemon/server.go:673` (`EnqueueRequest`) | Add `MinSeverity string` with `json:"min_severity,omitempty"` tag so the daemon can receive the CLI value. |
-| `internal/daemon/server.go:handleEnqueue` | Validate `req.MinSeverity` via `config.NormalizeMinSeverity` near line 866 (mirrors the existing `ResolveReviewReasoning` pattern), reject invalid input with 400, and pass the **normalized return value** (`normalizedMinSev`) into all four review-branch `EnqueueOpts` literals (lines ~955, ~979, ~1056, ~1108) — never raw `req.MinSeverity`. |
+| `internal/daemon/server.go:handleEnqueue` | Validate `req.MinSeverity` via `config.NormalizeMinSeverity` near line 866 (mirrors the existing `ResolveReviewReasoning` pattern), reject invalid input with 400, and store the **normalized return value** (`normalizedMinSev`) into all four review-branch `EnqueueOpts` literals (lines ~955, ~979, ~1056, ~1108) — never raw `req.MinSeverity`. The storage layer also applies `normalizeMinSeverityForWrite` as the last-line guarantee (see §4). |
 | `internal/daemon/worker.go:398/401` | New call to `ResolveReviewMinSeverity` before building the review prompt — see §5 for the snippet. |
 | `internal/daemon/server.go handleFixJob` | Resolves `ResolveFixMinSeverity` at enqueue time and bakes the severity instruction into the stored fix prompt — see §3.5. |
 
@@ -132,16 +132,16 @@ MinSeverity string `json:"min_severity,omitempty"`
 **Hydration field** (`internal/storage/hydration.go`) — add to `reviewJobScanFields`:
 
 ```go
-MinSeverity sql.NullString
+MinSeverity string
 ```
 
-And in `applyReviewJobScan`, copy through when valid (mirror the existing `Model`/`Provider` blocks).
+Plain `string`, not `sql.NullString` — all queries use `COALESCE(j.min_severity, '')` so the scan target is never null. In `applyReviewJobScan`, copy through directly: `job.MinSeverity = fields.MinSeverity`.
 
 **SQL site checklist** — every place that touches `review_jobs` columns needs `min_severity` added to its column list. This is the same plumbing pattern that `reasoning`, `model`, `provider`, and `requested_model` already follow:
 
 | File | Site (line ≈) | What |
 |------|---------------|------|
-| `internal/storage/jobs.go` | `EnqueueJob` INSERT (~123) | Add column to INSERT, add value via `nullString(opts.MinSeverity)`, add `MinSeverity` to `EnqueueOpts` struct (~42), copy onto returned `ReviewJob` |
+| `internal/storage/jobs.go` | `EnqueueJob` INSERT (~123) | Add column to INSERT, add value via `normalizeMinSeverityForWrite(opts.MinSeverity)`, add `MinSeverity` to `EnqueueOpts` struct (~42), copy onto returned `ReviewJob` |
 | `internal/storage/jobs.go` | `ClaimJob` SELECT (~209) | Add `j.min_severity` to column list and `&fields.MinSeverity` to scan |
 | `internal/storage/jobs.go` | `ListJobs` SELECT (~782) | Same |
 | `internal/storage/jobs.go` | `GetJobByID` SELECT (~871) | Same |
@@ -149,9 +149,9 @@ And in `applyReviewJobScan`, copy through when valid (mirror the existing `Model
 | `internal/storage/reviews.go` | `GetReviewByCommitSHA` SELECT (~52) | Same |
 | `internal/storage/reviews.go` | `GetJobsWithReviewsByIDs` SELECT (~307) | Same |
 | `internal/storage/sync.go` | `GetJobsToSync` SELECT (~304) | Add column with `COALESCE(j.min_severity, '')`, add to scan, add to `SyncableJob` struct |
-| `internal/storage/sync.go` | `UpsertPulledJob` INSERT + ON CONFLICT (~582) | Add column to INSERT, add `nullStr(j.MinSeverity)` to params, add to `PulledJob` struct |
+| `internal/storage/sync.go` | `UpsertPulledJob` INSERT + ON CONFLICT (~582) | Add column to INSERT, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params and ON CONFLICT update, add to `PulledJob` struct |
 | `internal/storage/postgres.go` | v11 migration (~291) | New `ALTER TABLE ... ADD COLUMN IF NOT EXISTS min_severity` block |
-| `internal/storage/postgres.go` | `UpsertJob` INSERT (~554) | Add column to INSERT and ON CONFLICT update list, add `nullString(j.MinSeverity)` to params |
+| `internal/storage/postgres.go` | `UpsertJob` INSERT (~554) | Add column to INSERT and ON CONFLICT update list, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params |
 | `internal/storage/postgres.go` | `PullJobs` SELECT (~656) | Add `COALESCE(j.min_severity, '')` to column list and scan into `PulledJob` |
 
 The `SyncableJob` and `PulledJob` structs (in `sync.go` and `postgres.go` respectively) each gain a `MinSeverity string` field. Tests that build these structs by hand may need updating.

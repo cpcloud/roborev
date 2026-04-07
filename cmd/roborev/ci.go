@@ -189,9 +189,16 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		return err
 	}
 
-	// Resolve min severity
-	minSev, err := config.ResolveCIMinSeverity(
+	// Resolve min severity for synthesis output filtering
+	ciMinSev, err := config.ResolveCIMinSeverity(
 		opts.minSeverity, repoCfg, globalCfg)
+	if err != nil {
+		return err
+	}
+
+	// Resolve review-level min severity for prompt injection
+	reviewMinSev, err := config.ResolveReviewMinSeverity(
+		"", root, globalCfg)
 	if err != nil {
 		return err
 	}
@@ -202,9 +209,9 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 
 	log.Printf(
 		"ci review: ref=%s agents=%v types=%v "+
-			"reasoning=%s min_severity=%s",
+			"reasoning=%s ci_min_severity=%s review_min_severity=%s",
 		gitRef, agents, reviewTypes,
-		reasoningLevel, minSev)
+		reasoningLevel, ciMinSev, reviewMinSev)
 
 	// Run batch
 	batchCfg := review.BatchConfig{
@@ -214,7 +221,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		ReviewTypes:  reviewTypes,
 		Reasoning:    reasoningLevel,
 		GlobalConfig: globalCfg,
-		MinSeverity:  minSev,
+		MinSeverity:  reviewMinSev,
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -226,7 +233,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	comment, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
 			Agent:        synthAgent,
-			MinSeverity:  minSev,
+			MinSeverity:  ciMinSev,
 			RepoPath:     root,
 			GitRef:       gitRef,
 			HeadSHA:      headSHA,

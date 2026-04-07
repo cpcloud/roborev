@@ -639,6 +639,28 @@ var verdictTests = []verdictTestCase{
 		output: "Severity - High\nLocation: file.go\nProblem: Bug found.",
 		want:   VerdictFail,
 	},
+
+	// --- SeverityThresholdMarker: SEVERITY_THRESHOLD_MET handling ---
+	{
+		name:   "ThresholdMarker/marker alone is pass",
+		output: "SEVERITY_THRESHOLD_MET",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with surrounding text no findings",
+		output: "All findings are below medium severity.\n\nSEVERITY_THRESHOLD_MET\n\nNo code changes needed.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker plus severity labels is fail",
+		output: "- Medium — some issue\n\nSEVERITY_THRESHOLD_MET",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ThresholdMarker/marker plus high severity is fail",
+		output: "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
+		want:   VerdictFail,
+	},
 }
 
 func TestParseVerdict(t *testing.T) {

@@ -214,6 +214,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		ReviewTypes:  reviewTypes,
 		Reasoning:    reasoningLevel,
 		GlobalConfig: globalCfg,
+		MinSeverity:  minSev,
 	}
 
 	results := review.RunBatch(ctx, batchCfg)

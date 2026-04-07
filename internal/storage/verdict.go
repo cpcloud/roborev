@@ -3,6 +3,8 @@ package storage
 import (
 	"database/sql"
 	"strings"
+
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 const (
@@ -58,6 +60,11 @@ func ParseVerdict(output string) string {
 	// These appear as "- Medium —", "* Low:", "Critical -", etc.
 	if hasSeverityLabel(output) {
 		return verdictFail
+	}
+
+	// Marker signals pass ONLY when no severity labels are present.
+	if strings.Contains(output, config.SeverityThresholdMarker) {
+		return verdictPass
 	}
 
 	for line := range strings.SplitSeq(output, "\n") {

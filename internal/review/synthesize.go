@@ -68,8 +68,9 @@ func Synthesize(
 		return comment, ErrAllFailed
 	}
 
-	// Single result — return directly, no synthesis needed
-	if len(results) == 1 && successCount == 1 {
+	// Single result — return directly unless CI min-severity
+	// filtering is needed (synthesis applies the filter).
+	if len(results) == 1 && successCount == 1 && opts.MinSeverity == "" {
 		return formatSingleResult(
 			results[0], opts.HeadSHA), nil
 	}

@@ -144,6 +144,11 @@ type Config struct {
 	SecurityBackupModel string `toml:"security_backup_model"`
 	DesignBackupModel   string `toml:"design_backup_model"`
 
+	// Minimum severity thresholds (global defaults)
+	ReviewMinSeverity string `toml:"review_min_severity" comment:"Minimum severity for reviews: critical, high, medium, or low. Empty disables filtering."`
+	RefineMinSeverity string `toml:"refine_min_severity" comment:"Minimum severity for refine: critical, high, medium, or low. Empty disables filtering."`
+	FixMinSeverity    string `toml:"fix_min_severity" comment:"Minimum severity for fix: critical, high, medium, or low. Empty disables filtering."`
+
 	AllowUnsafeAgents   *bool `toml:"allow_unsafe_agents"`   // nil = not set, allows commands to choose their own default
 	DisableCodexSandbox bool  `toml:"disable_codex_sandbox"` // use --full-auto instead of --sandbox read-only (for systems where bwrap is broken)
 	ReuseReviewSession  *bool `toml:"reuse_review_session"`  // nil = not set; when true, reuse prior branch review sessions when possible
@@ -621,8 +626,9 @@ type RepoConfig struct {
 	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
 	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
 	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
-	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
+	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
+	ReviewMinSeverity          string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
 	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
@@ -1567,33 +1573,46 @@ func validateRepoReasoningOverride(
 }
 
 // ResolveFixMinSeverity determines minimum severity for fix.
-// Priority: explicit > per-repo config > "" (no filter)
-func ResolveFixMinSeverity(
-	explicit string, repoPath string,
-) (string, error) {
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveFixMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
-		repoCfg != nil &&
-		strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.FixMinSeverity)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.FixMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.FixMinSeverity)
 	}
 	return "", nil
 }
 
 // ResolveRefineMinSeverity determines minimum severity for refine.
-// Priority: explicit > per-repo config > "" (no filter)
-func ResolveRefineMinSeverity(
-	explicit string, repoPath string,
-) (string, error) {
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveRefineMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
-		repoCfg != nil &&
-		strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.RefineMinSeverity)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.RefineMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.RefineMinSeverity)
+	}
+	return "", nil
+}
+
+// ResolveReviewMinSeverity determines minimum severity for review.
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveReviewMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeMinSeverity(explicit)
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
+		return NormalizeMinSeverity(repoCfg.ReviewMinSeverity)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.ReviewMinSeverity)
 	}
 	return "", nil
 }

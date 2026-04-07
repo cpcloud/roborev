@@ -394,7 +394,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 	// Resolve minimum severity filter
 	minSev, err := config.ResolveRefineMinSeverity(
-		opts.minSeverity, repoPath,
+		opts.minSeverity, repoPath, cfg,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve min-severity: %w", err)

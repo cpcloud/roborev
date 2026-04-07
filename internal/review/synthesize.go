@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // ErrAllFailed is returned by Synthesize when every review job
@@ -96,7 +96,7 @@ func formatSingleResult(
 ) string {
 	var header string
 	if r.Output == "" || r.Output == "No issues found." ||
-		strings.Contains(r.Output, config.SeverityThresholdMarker) {
+		storage.ParseVerdict(r.Output) == "P" {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
 			git.ShortSHA(headSHA))

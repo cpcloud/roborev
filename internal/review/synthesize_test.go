@@ -122,6 +122,21 @@ func TestSynthesize_Formatting(t *testing.T) {
 			},
 		},
 		{
+			name: "ThresholdMetWithFindings",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "review",
+					Status:     "done",
+					Output:     "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Complete",
+			},
+		},
+		{
 			name: "AllQuota",
 			results: []ReviewResult{
 				{

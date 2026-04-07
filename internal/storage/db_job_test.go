@@ -1291,7 +1291,7 @@ func TestMinSeverityRoundTrip(t *testing.T) {
 		Agent:    "test",
 	})
 	require.NoError(t, err)
-	assert.Equal("", job2.MinSeverity)
+	assert.Empty(job2.MinSeverity)
 }
 
 func TestMinSeverityNormalizesOnWrite(t *testing.T) {
@@ -1311,5 +1311,5 @@ func TestMinSeverityNormalizesOnWrite(t *testing.T) {
 		MinSeverity: "bogus",
 	})
 	require.NoError(t, err)
-	assert.Equal("", job.MinSeverity)
+	assert.Empty(job.MinSeverity)
 }

@@ -70,7 +70,9 @@ func Synthesize(
 
 	// Single result — return directly unless CI min-severity
 	// filtering is needed (synthesis applies the filter).
-	if len(results) == 1 && successCount == 1 && opts.MinSeverity == "" {
+	// "low" means no filtering, so treat same as empty.
+	if len(results) == 1 && successCount == 1 &&
+		(opts.MinSeverity == "" || opts.MinSeverity == "low") {
 		return formatSingleResult(
 			results[0], opts.HeadSHA), nil
 	}

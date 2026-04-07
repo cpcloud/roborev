@@ -1617,6 +1617,32 @@ func ResolveReviewMinSeverity(explicit string, repoPath string, globalCfg *Confi
 	return "", nil
 }
 
+// severityRank returns a numeric rank for a severity level.
+// Higher rank = stricter threshold (fewer findings pass).
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// StricterSeverity returns whichever severity threshold is stricter
+// (filters more). Empty string means "no filter" (least strict).
+func StricterSeverity(a, b string) string {
+	if severityRank(a) >= severityRank(b) {
+		return a
+	}
+	return b
+}
+
 // ResolveModel determines which model to use based on config priority:
 // 1. Explicit model parameter (if non-empty)
 // 2. Per-repo config (model in .roborev.toml)

@@ -207,11 +207,15 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	synthAgent := config.ResolveCISynthesisAgent(
 		opts.synthesisAgent, repoCfg, globalCfg)
 
+	// Prompt-level threshold: use stricter of review and CI thresholds
+	// so single-result CI runs (which skip synthesis) still filter.
+	promptMinSev := config.StricterSeverity(reviewMinSev, ciMinSev)
+
 	log.Printf(
 		"ci review: ref=%s agents=%v types=%v "+
-			"reasoning=%s ci_min_severity=%s review_min_severity=%s",
+			"reasoning=%s ci_min_severity=%s review_min_severity=%s prompt_min_severity=%s",
 		gitRef, agents, reviewTypes,
-		reasoningLevel, ciMinSev, reviewMinSev)
+		reasoningLevel, ciMinSev, reviewMinSev, promptMinSev)
 
 	// Run batch
 	batchCfg := review.BatchConfig{
@@ -221,7 +225,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		ReviewTypes:  reviewTypes,
 		Reasoning:    reasoningLevel,
 		GlobalConfig: globalCfg,
-		MinSeverity:  reviewMinSev,
+		MinSeverity:  promptMinSev,
 	}
 
 	results := review.RunBatch(ctx, batchCfg)

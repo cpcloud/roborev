@@ -1467,8 +1467,8 @@ func IsMarkerOnlyOutput(output string) bool {
 
 	// Strip a fenced code block if the output is wrapped in one.
 	if rest, ok := strings.CutPrefix(s, "```"); ok {
-		if nl := strings.Index(rest, "\n"); nl >= 0 {
-			s = rest[nl+1:]
+		if _, after, found := strings.Cut(rest, "\n"); found {
+			s = after
 		} else {
 			s = rest
 		}

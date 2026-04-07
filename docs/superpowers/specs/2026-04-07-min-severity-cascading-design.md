@@ -94,9 +94,9 @@ Refine and fix follow the identical shape, just reading their respective fields.
 | `cmd/roborev/refine.go:384` | `cfg` is already loaded at line 351 — pass it into `ResolveRefineMinSeverity` |
 | `cmd/roborev/fix.go:825` (`fixSingleJob`) | Load `cfg, _ := config.LoadGlobal()` near the top of the function (the existing call to `resolveFixAgent` loads it internally but doesn't return it, so a second `LoadGlobal()` call is the simplest fix). Pass into `ResolveFixMinSeverity`. |
 | `cmd/roborev/fix.go:1013` (`runFixBatch`) | `cfg` is currently loaded at line 1030 (after the resolver call). Move the `cfg, _ := config.LoadGlobal()` call up before line 1013 and pass into `ResolveFixMinSeverity`. |
-| `cmd/roborev/review.go` | New `--min-severity` flag — validates via `NormalizeMinSeverity`, sends raw value as `min_severity` field in the `EnqueueRequest` POST body. Does NOT call the resolver for the daemon path — see §4. For `--local` mode: `runLocalReview` gains a `minSeverity string` parameter, calls `config.ResolveReviewMinSeverity(flag, repoPath, cfg)` (fail-fast on error), and passes the result into `pb.Build`/`pb.BuildDirty`. |
+| `cmd/roborev/review.go` | New `--min-severity` flag — validates via `NormalizeMinSeverity`, sends the **canonical lowercase return value** (NOT the raw user input) as `min_severity` in the `EnqueueRequest` POST body. Does NOT call the resolver for the daemon path — see §4. For `--local` mode: `runLocalReview` gains a `minSeverity string` parameter, calls `config.ResolveReviewMinSeverity(flag, repoPath, cfg)` (fail-fast on error), and passes the result into `pb.Build`/`pb.BuildDirty`. |
 | `internal/daemon/server.go:673` (`EnqueueRequest`) | Add `MinSeverity string` with `json:"min_severity,omitempty"` tag so the daemon can receive the CLI value. |
-| `internal/daemon/server.go:handleEnqueue` | Pass `MinSeverity: req.MinSeverity` into all four review-branch `EnqueueOpts` literals (lines ~955, ~979, ~1056, ~1108). |
+| `internal/daemon/server.go:handleEnqueue` | Validate `req.MinSeverity` via `config.NormalizeMinSeverity` near line 866 (mirrors the existing `ResolveReviewReasoning` pattern), reject invalid input with 400, and pass the **normalized return value** (`normalizedMinSev`) into all four review-branch `EnqueueOpts` literals (lines ~955, ~979, ~1056, ~1108) — never raw `req.MinSeverity`. |
 | `internal/daemon/worker.go:398/401` | New call to `ResolveReviewMinSeverity` before building the review prompt — see §5 for the snippet. |
 | `internal/daemon/server.go handleFixJob` | Resolves `ResolveFixMinSeverity` at enqueue time and bakes the severity instruction into the stored fix prompt — see §3.5. |
 
@@ -211,23 +211,52 @@ Add `--min-severity` to `cmd/roborev/review.go`. The flag value:
 
 **Why normalize at the boundary:** `config.SeverityInstruction(minSeverity)` looks up its argument in a strict map (`severityAbove` at `internal/config/config.go:1372`) that only accepts canonical lowercase keys (`critical`, `high`, `medium`, `low`). It returns `""` for anything else. The worker uses `job.MinSeverity` directly when non-empty (it does NOT re-normalize), so if anything stored `"HIGH"` or `" high "` the worker would pass that through to `SeverityInstruction`, get back `""`, and silently disable the filter.
 
-**Two trust boundaries, both validate:**
+**The storage invariant:** `review_jobs.min_severity` always holds either an empty string or a canonical lowercase value (`critical`, `high`, `medium`, `low`). The worker depends on this. Three distinct trust boundaries enforce it, because there are three distinct write paths into the column:
 
-1. **CLI boundary** (`cmd/roborev/review.go`): `NormalizeMinSeverity` runs on the user's flag value, errors out on bad input, and the canonical return value is what gets sent on the wire. This is the user-facing first line of defense — a typo at the CLI surfaces immediately as a helpful error message instead of getting persisted.
+1. **CLI boundary** (`cmd/roborev/review.go`) — user-facing entry: `NormalizeMinSeverity` runs on the user's flag value, errors out on bad input, and the canonical return value is what gets sent on the wire. Surfaces typos immediately as helpful error messages.
 
-2. **Daemon enqueue boundary** (`internal/daemon/server.go handleEnqueue`): even though the CLI normalizes today, the daemon must also validate. `EnqueueRequest` is a JSON-over-HTTP API that any client can hit (including a future automation script, an MCP wrapper, or sync-pulled jobs from an older machine that didn't have CLI-side normalization). The daemon validates `req.MinSeverity` via `NormalizeMinSeverity` for review-branch enqueues, returns 400 Bad Request on invalid input, and stores the **return value** (canonical lowercase) into `EnqueueOpts.MinSeverity`. This is the same pattern `handleEnqueue` already follows for reasoning at line 866 (`config.ResolveReviewReasoning(req.Reasoning, repoRoot)`). Validating at both boundaries is defense in depth, not duplication: each boundary catches a different class of caller.
+2. **Daemon enqueue boundary** (`internal/daemon/server.go handleEnqueue`) — HTTP entry: `EnqueueRequest` is a JSON-over-HTTP API that any client can hit (a future automation script, an MCP wrapper, a custom curl). The daemon validates `req.MinSeverity` via `NormalizeMinSeverity`, returns 400 Bad Request on invalid input, and stores the **return value** into `EnqueueOpts.MinSeverity`. Same pattern `handleEnqueue` follows for reasoning at line 866.
+
+3. **Storage write boundary** (`internal/storage/jobs.go`, `internal/storage/sync.go`, `internal/storage/postgres.go`) — sync entry: jobs flow into `review_jobs.min_severity` via at least three distinct write sites — `EnqueueJob` (called from `handleEnqueue` and from CLI direct paths), `UpsertPulledJob` (called by `syncworker.go` when pulling from Postgres), and PG `UpsertJob` (called when pushing to Postgres). The CLI and daemon boundaries above only cover the first one; sync ingest is a third path that bypasses HTTP entirely and copies values straight from a remote machine that may pre-date this change or have been corrupted. Without normalization at the storage layer, a synced `"HIGH"` value would silently disable the filter on the local machine — exactly the bug this section is supposed to prevent.
+
+The fix is a small storage-layer helper that every write site calls:
 
 ```go
-// In handleEnqueue, near the other validation calls (~line 866):
-normalizedMinSev, err := config.NormalizeMinSeverity(req.MinSeverity)
-if err != nil {
-    writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid min_severity: %v", err))
-    return
+// internal/storage/min_severity.go
+package storage
+
+import "github.com/roborev/internal/config"
+
+// normalizeMinSeverityForWrite returns the canonical lowercase value or empty
+// string. Invalid input is dropped (returned as empty), not rejected — sync
+// ingest from a stale or corrupted remote machine should not fail the entire
+// sync over a single bad column. Local user-facing entry points (CLI, daemon)
+// validate fail-fast; this storage helper is the last-line guarantee for the
+// stored invariant and is intentionally lossy on bad input.
+func normalizeMinSeverityForWrite(value string) string {
+    normalized, err := config.NormalizeMinSeverity(value)
+    if err != nil {
+        // Bad value somehow reached the storage layer. Drop it so the
+        // stored invariant holds; the worker will then fall back to the
+        // cascade resolution. Log so the dropped value is recoverable
+        // from operator-side logs if needed.
+        return ""
+    }
+    return normalized
 }
-// Use normalizedMinSev (NOT req.MinSeverity) when building EnqueueOpts.
 ```
 
-**Worker stays simple:** the worker reads `job.MinSeverity` and passes it verbatim to `pb.Build` / `pb.BuildDirty`. No re-normalization, no extra validation — the storage layer is past the trust boundary, so the value is trusted by construction. This keeps the worker's hot path uncluttered and reflects the invariant: **anything in `review_jobs.min_severity` has been normalized at write time.**
+Apply at every write site that touches `min_severity`:
+
+| Site | Wrap |
+|------|------|
+| `EnqueueJob` (`internal/storage/jobs.go:~123`) | `normalizeMinSeverityForWrite(opts.MinSeverity)` in the INSERT params |
+| `UpsertPulledJob` (`internal/storage/sync.go:579`) | `normalizeMinSeverityForWrite(j.MinSeverity)` in the INSERT params and the ON CONFLICT update |
+| `UpsertJob` (`internal/storage/postgres.go:553`) | `normalizeMinSeverityForWrite(j.MinSeverity)` in the INSERT params and the ON CONFLICT update |
+
+Why drop instead of error on the storage path: sync runs in a background worker that processes batches; a single corrupt row from a stale remote machine should not halt sync for everything else. The worst case post-drop is "filter falls back to cascade," which matches the empty-column behavior — strictly safer than the current "silently disable filter on read."
+
+**Worker stays simple:** with the storage invariant enforced at every write site, the worker reads `job.MinSeverity` and passes it verbatim to `pb.Build` / `pb.BuildDirty`. No re-normalization, no extra validation. The hot path stays uncluttered and reflects the now-truly-enforced invariant: **anything in `review_jobs.min_severity` is canonical or empty.**
 
 **Wire path:**
 

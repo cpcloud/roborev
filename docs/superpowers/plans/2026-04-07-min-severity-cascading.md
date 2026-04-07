@@ -279,23 +279,6 @@ Expected: PASS — all cases including new global-tier cases.
 Run: `nix develop -c go build ./...`
 Expected: Build succeeds — all callers updated.
 
-- [ ] **Step 9: Commit**
-
-```bash
-git add internal/config/config.go internal/config/config_test.go cmd/roborev/refine.go cmd/roborev/fix.go
-git commit -m "$(cat <<'EOF'
-feat(config): add global severity fields and ResolveReviewMinSeverity
-
-Add ReviewMinSeverity, RefineMinSeverity, and FixMinSeverity to
-the global Config struct. Add ReviewMinSeverity to RepoConfig.
-Create ResolveReviewMinSeverity resolver. Update existing resolvers
-to accept globalCfg parameter for the full cascade.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 2: Storage — SQLite migration for min_severity column
@@ -325,21 +308,6 @@ In `internal/storage/db.go`, after the `worktree_path` migration block (line 764
 
 Run: `nix develop -c go test ./internal/storage/ -run TestMigration -v -count=1`
 Expected: PASS — existing migration tests still pass (opening a DB triggers `migrate()`; no crash means the ALTER is idempotent via the guard).
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add internal/storage/db.go
-git commit -m "$(cat <<'EOF'
-feat(storage): add min_severity column to review_jobs (SQLite)
-
-Appends an idempotent ALTER TABLE migration guarded by
-pragma_table_info, following the existing worktree_path pattern.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -410,22 +378,6 @@ func normalizeMinSeverityForWrite(value string) string {
 
 Run: `nix develop -c go build ./internal/storage/...`
 Expected: Build succeeds.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add internal/storage/models.go internal/storage/hydration.go internal/storage/min_severity.go
-git commit -m "$(cat <<'EOF'
-feat(storage): add MinSeverity to model, hydration, and write helper
-
-Add MinSeverity field to ReviewJob, scan fields for hydration,
-and a normalizeMinSeverityForWrite helper that guards the storage
-invariant at every write site.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -575,22 +527,6 @@ Expected: PASS
 Run: `nix develop -c go test ./internal/storage/ -v -count=1`
 Expected: PASS — all existing tests still pass with the new column.
 
-- [ ] **Step 9: Commit**
-
-```bash
-git add internal/storage/jobs.go internal/storage/db_job_test.go
-git commit -m "$(cat <<'EOF'
-feat(storage): wire min_severity through jobs CRUD
-
-Add MinSeverity to EnqueueOpts. Thread through EnqueueJob INSERT,
-ClaimJob, ListJobs, and GetJobByID SELECTs. Uses
-normalizeMinSeverityForWrite at the write boundary.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 5: Storage — Reviews queries
@@ -622,21 +558,6 @@ Add `&job.MinSeverity` to the scan.
 
 Run: `nix develop -c go test ./internal/storage/ -v -count=1`
 Expected: PASS — all existing tests pass with the extra column.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add internal/storage/reviews.go
-git commit -m "$(cat <<'EOF'
-feat(storage): add min_severity to review query SELECTs
-
-Thread COALESCE(j.min_severity, '') through GetReviewByJobID,
-GetReviewByCommitSHA, and GetJobsWithReviewsByIDs.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -747,23 +668,6 @@ Expected: Build succeeds.
 Run: `nix develop -c go test ./internal/storage/ -v -count=1`
 Expected: PASS — SQLite tests pass. (PG tests require TEST_POSTGRES_URL and are skipped by default.)
 
-- [ ] **Step 11: Commit**
-
-```bash
-git add internal/storage/sync.go internal/storage/postgres.go internal/storage/schemas/postgres_v11.sql
-git commit -m "$(cat <<'EOF'
-feat(storage): wire min_severity through sync and PostgreSQL
-
-Add MinSeverity to SyncableJob and PulledJob. Thread through
-GetJobsToSync, UpsertPulledJob, PG UpsertJob, and PG PullJobs.
-Create postgres_v11.sql with the new column. Bump pgSchemaVersion
-to 11 with migration block for upgraded installs.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 7: Verdict — ParseVerdict SEVERITY_THRESHOLD_MET marker
@@ -849,21 +753,6 @@ func ParseVerdict(output string) string {
 
 Run: `nix develop -c go test ./internal/storage/ -run TestParseVerdict -v`
 Expected: PASS — all cases including new marker cases.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add internal/storage/verdict.go internal/storage/verdict_test.go
-git commit -m "$(cat <<'EOF'
-feat(verdict): recognize SEVERITY_THRESHOLD_MET as pass
-
-Add marker detection to ParseVerdict after the hasSeverityLabel
-gate so severity labels remain authoritative for mixed outputs.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -1037,22 +926,6 @@ Expected: PASS
 Run: `nix develop -c go build ./...`
 Expected: Build succeeds — all callers compile.
 
-- [ ] **Step 9: Commit**
-
-```bash
-git add internal/prompt/prompt.go internal/prompt/prompt_test.go internal/daemon/worker.go cmd/roborev/review.go
-git commit -m "$(cat <<'EOF'
-feat(prompt): inject SeverityInstruction into Build/BuildDirty
-
-Add minSeverity parameter to Build, BuildDirty, buildSinglePrompt,
-and buildRangePrompt. Inject into requiredPrefix so the instruction
-is never trimmed by budget calculations.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 9: Daemon — EnqueueRequest and handleEnqueue
@@ -1142,22 +1015,6 @@ Expected: PASS.
 
 Run: `nix develop -c go test ./internal/daemon/ -v -count=1 -timeout=120s`
 Expected: PASS — all existing tests still pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add internal/daemon/server.go internal/daemon/server_test.go
-git commit -m "$(cat <<'EOF'
-feat(daemon): wire min_severity through EnqueueRequest and handleEnqueue
-
-Add MinSeverity field to EnqueueRequest. Validate via
-NormalizeMinSeverity in handleEnqueue (400 Bad Request on invalid).
-Thread normalized value into all four EnqueueOpts branches.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -1294,22 +1151,6 @@ Expected: PASS.
 
 Run: `nix develop -c go test ./internal/daemon/ -v -count=1 -timeout=120s`
 Expected: PASS — all existing worker tests still pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add internal/daemon/worker.go internal/daemon/worker_test.go
-git commit -m "$(cat <<'EOF'
-feat(daemon): resolve min-severity cascade in worker
-
-Worker resolves effective min-severity from job override then
-cascade (repo -> global) before building the review prompt.
-Invalid configured severity fails the job visibly.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
 
 ---
 
@@ -1552,23 +1393,6 @@ Expected: PASS.
 Run: `nix develop -c go test ./internal/daemon/ -v -count=1 -timeout=120s`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add internal/daemon/server.go internal/daemon/server_test.go
-git commit -m "$(cat <<'EOF'
-feat(daemon): bake min-severity into fix prompts at enqueue time
-
-handleFixJob resolves fix_min_severity from config cascade (with
-worktree-aware path resolution), skips task/insights parents, and
-threads the result into buildFixPrompt/buildFixPromptWithInstructions.
-buildRebasePrompt stays threshold-free.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 12: CLI — review --min-severity flag
@@ -1706,21 +1530,6 @@ Expected: PASS
 Run: `nix develop -c go build ./...`
 Expected: Build succeeds.
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add cmd/roborev/review.go cmd/roborev/review_test.go
-git commit -m "$(cat <<'EOF'
-feat(cli): add --min-severity flag to roborev review
-
-Validates via NormalizeMinSeverity, sends canonical value to daemon.
-Honors the cascade in --local mode via ResolveReviewMinSeverity.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
-
 ---
 
 ### Task 13: Full build and test sweep
@@ -1744,14 +1553,4 @@ Expected: No new warnings.
 
 - [ ] **Step 4: Fix any issues**
 
-If any tests or lint issues arise, fix them and commit:
-
-```bash
-git add -A
-git commit -m "$(cat <<'EOF'
-fix: address lint/test issues from min-severity implementation
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-EOF
-)"
-```
+If any tests or lint issues arise, fix them.

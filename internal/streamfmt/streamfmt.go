@@ -274,22 +274,24 @@ func (f *Formatter) processLine(line string) {
 				f.writeText(text)
 			}
 		}
-	case "tool_use":
-		// Gemini format: top-level tool use
-		if ev.ToolName != "" {
+	case "item.started", "item.completed", "item.updated":
+		// Codex format: item events
+		f.processCodexItem(ev.Type, ev.Item)
+	case "text", "reasoning", "tool", "tool_use":
+		// Both Gemini and opencode use "tool_use", and opencode
+		// 1.4+ emits "tool_use" where earlier versions used
+		// "tool". Route by payload shape: an opencode event
+		// carries a nested "part" object; a Gemini tool_use
+		// carries top-level tool_name/parameters.
+		switch {
+		case ev.Part != nil:
+			f.processOpenCodePart(ev.Type, ev.Part)
+		case ev.Type == "tool_use" && ev.ToolName != "":
 			displayName := geminiToolNames[ev.ToolName]
 			if displayName == "" {
 				displayName = ev.ToolName
 			}
 			f.formatToolUse(displayName, ev.Parameters)
-		}
-	case "item.started", "item.completed", "item.updated":
-		// Codex format: item events
-		f.processCodexItem(ev.Type, ev.Item)
-	case "text", "reasoning", "tool":
-		// OpenCode format: event body nested under "part"
-		if ev.Part != nil {
-			f.processOpenCodePart(ev.Type, ev.Part)
 		}
 	case "step_start", "step_finish":
 		// OpenCode lifecycle events — suppress
@@ -357,7 +359,7 @@ func (f *Formatter) processOpenCodePart(
 				f.writeReasoning(text)
 			}
 		}
-	case "tool":
+	case "tool", "tool_use":
 		var tp opencodeToolPart
 		if json.Unmarshal(raw, &tp) != nil || tp.Tool == "" {
 			return

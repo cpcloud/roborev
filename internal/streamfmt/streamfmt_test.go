@@ -707,6 +707,24 @@ func TestFormatter_OpenCode(t *testing.T) {
 			},
 			empty: true,
 		},
+		{
+			// opencode 1.4+ emits outer type "tool_use" while the
+			// nested part.type stays "tool". Ensure the renderer
+			// handles the newer event shape.
+			name: "ToolUseOuterType",
+			events: []string{
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool",
+					Tool: "Read",
+					ID:   "tc_newshape",
+					State: &openCodeState{
+						Status: "completed",
+						Input:  filePathInput("internal/agent/opencode.go"),
+					},
+				}),
+			},
+			contains: []string{"Read   internal/agent/opencode.go"},
+		},
 	}
 
 	for _, tc := range tests {

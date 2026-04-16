@@ -568,6 +568,29 @@ func TestFormatter_Gemini(t *testing.T) {
 			},
 		},
 		{
+			// Exercises alias-table entries not covered by "ToolUse":
+			// write_file, grep, glob, list_dir. list_dir specifically
+			// takes a directory `path`, not a `pattern`, so it must
+			// render through the List display path.
+			name: "AliasCoverage",
+			events: []string{
+				eventGeminiToolUse("write_file", "t1",
+					&toolInput{FilePath: "out.txt"}),
+				eventGeminiToolUse("grep", "t2",
+					&toolInput{Pattern: "TODO", Path: "internal/"}),
+				eventGeminiToolUse("glob", "t3",
+					&toolInput{Pattern: "**/*.go"}),
+				eventGeminiToolUse("list_dir", "t4",
+					&toolInput{Path: "internal/streamfmt"}),
+			},
+			contains: []string{
+				"Write  out.txt",
+				"Grep   TODO  internal/",
+				"Glob   **/*.go",
+				"List   internal/streamfmt",
+			},
+		},
+		{
 			name: "ToolResultSuppressed",
 			events: []string{
 				eventGeminiToolResult("t1", "success", "file contents here"),

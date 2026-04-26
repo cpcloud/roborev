@@ -140,6 +140,9 @@ type reviewScanFields struct {
 	Closed      int
 	UUID        sql.NullString
 	VerdictBool sql.NullInt64
+	HighCount   int
+	MediumCount int
+	LowCount    int
 }
 
 func applyReviewScan(review *Review, fields reviewScanFields) {
@@ -149,6 +152,9 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 		review.UUID = fields.UUID.String
 	}
 	applyReviewVerdict(review, fields.VerdictBool)
+	review.HighCount = fields.HighCount
+	review.MediumCount = fields.MediumCount
+	review.LowCount = fields.LowCount
 }
 
 func scanCommit(scanner sqlScanner) (*Commit, error) {

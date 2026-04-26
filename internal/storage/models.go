@@ -211,6 +211,11 @@ type Review struct {
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
 	VerdictBool *int `json:"verdict_bool,omitempty"`
 
+	// Per-severity finding counts (parsed from Output at completion time).
+	HighCount   int `json:"high_count"`
+	MediumCount int `json:"medium_count"`
+	LowCount    int `json:"low_count"`
+
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`
 }

@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// derefOrZero returns the dereferenced int, or 0 if the pointer is nil.
+// Used to safely combine the three finding-count pointers that JSON
+// deserialization or ad-hoc producers may populate inconsistently.
+func derefOrZero(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 // renderSeverityBadge formats finding counts as "H3 M2 L5" with severity-
 // colored letters/numbers. Zero counts render in dim grey so columns stay
 // visually stable but de-emphasised. Plain-text width is always at least

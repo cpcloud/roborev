@@ -174,11 +174,9 @@ func (m model) renderQueueView() string {
 						}
 					}
 				}
-				if job.HighFindings != nil {
-					aggH += *job.HighFindings
-					aggM += *job.MediumFindings
-					aggL += *job.LowFindings
-				}
+				aggH += derefOrZero(job.HighFindings)
+				aggM += derefOrZero(job.MediumFindings)
+				aggL += derefOrZero(job.LowFindings)
 			}
 		} else {
 			done = m.jobStats.Done
@@ -679,8 +677,12 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
 	findings := ""
-	if job.HighFindings != nil {
-		findings = renderSeverityBadge(*job.HighFindings, *job.MediumFindings, *job.LowFindings)
+	if job.HighFindings != nil || job.MediumFindings != nil || job.LowFindings != nil {
+		findings = renderSeverityBadge(
+			derefOrZero(job.HighFindings),
+			derefOrZero(job.MediumFindings),
+			derefOrZero(job.LowFindings),
+		)
 	}
 
 	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, findings, handled, sessionID, requestedModel, requestedProvider}

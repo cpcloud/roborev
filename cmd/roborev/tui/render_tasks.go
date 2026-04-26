@@ -144,11 +144,11 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	}
 
 	findings := ""
-	if job.ParentHighFindings != nil {
+	if job.ParentHighFindings != nil || job.ParentMediumFindings != nil || job.ParentLowFindings != nil {
 		findings = renderSeverityBadge(
-			*job.ParentHighFindings,
-			*job.ParentMediumFindings,
-			*job.ParentLowFindings,
+			derefOrZero(job.ParentHighFindings),
+			derefOrZero(job.ParentMediumFindings),
+			derefOrZero(job.ParentLowFindings),
 		)
 	}
 

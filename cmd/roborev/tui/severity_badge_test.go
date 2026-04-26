@@ -6,6 +6,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestDerefOrZero(t *testing.T) {
+	assert.Equal(t, 0, derefOrZero(nil), "nil pointer should yield 0")
+	v := 42
+	assert.Equal(t, 42, derefOrZero(&v), "non-nil pointer should yield underlying value")
+	zero := 0
+	assert.Equal(t, 0, derefOrZero(&zero), "explicit 0 pointer should yield 0")
+}
+
 func TestRenderSeverityBadge(t *testing.T) {
 	tests := []struct {
 		name             string

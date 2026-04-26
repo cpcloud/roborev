@@ -2162,14 +2162,16 @@ func TestClosedKeyShortcut(t *testing.T) {
 
 func TestMigrateColumnConfig(t *testing.T) {
 	tests := []struct {
-		name         string
-		columnOrder  []string
-		hiddenCols   []string
-		version      int
-		wantDirty    bool
-		wantColOrder []string
-		wantHidden   []string
-		wantVersion  int
+		name             string
+		columnOrder      []string
+		taskColumnOrder  []string
+		hiddenCols       []string
+		version          int
+		wantDirty        bool
+		wantColOrder     []string
+		wantTaskColOrder []string
+		wantHidden       []string
+		wantVersion      int
 	}{
 		{
 			name:         "nil config unchanged",
@@ -2248,18 +2250,38 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantHidden:  []string{"branch"},
 			wantVersion: 1,
 		},
+		{
+			name:             "task column order has findings inserted after parent",
+			taskColumnOrder:  []string{"id", "ref", "agent", "status", "parent", "created"},
+			wantDirty:        true,
+			wantTaskColOrder: []string{"id", "ref", "agent", "status", "parent", "findings", "created"},
+		},
+		{
+			name:             "task column order without parent appends findings",
+			taskColumnOrder:  []string{"id", "ref", "agent", "status", "created"},
+			wantDirty:        true,
+			wantTaskColOrder: []string{"id", "ref", "agent", "status", "created", "findings"},
+		},
+		{
+			name:             "task column order already has findings is preserved",
+			taskColumnOrder:  []string{"id", "ref", "parent", "findings", "agent"},
+			wantDirty:        false,
+			wantTaskColOrder: []string{"id", "ref", "parent", "findings", "agent"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
 				ColumnOrder:         slices.Clone(tt.columnOrder),
+				TaskColumnOrder:     slices.Clone(tt.taskColumnOrder),
 				HiddenColumns:       slices.Clone(tt.hiddenCols),
 				ColumnConfigVersion: tt.version,
 			}
 			dirty := migrateColumnConfig(cfg)
 			assert.Equal(t, tt.wantDirty, dirty)
 			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder))
+			assert.True(t, slices.Equal(cfg.TaskColumnOrder, tt.wantTaskColOrder))
 			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden))
 			assert.Equal(t, tt.wantVersion, cfg.ColumnConfigVersion)
 		})

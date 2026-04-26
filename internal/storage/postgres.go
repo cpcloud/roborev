@@ -338,8 +338,12 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			}
 		}
 		if currentVersion < 13 {
+			// Nullable so the SQLite side can distinguish "not yet
+			// parsed" (NULL) from "parsed and zero findings" (0)
+			// during backfill — see BackfillFindingCounts. New rows
+			// are written with explicit ints, never NULL.
 			for _, col := range []string{"high_count", "medium_count", "low_count"} {
-				stmt := fmt.Sprintf(`ALTER TABLE roborev.reviews ADD COLUMN IF NOT EXISTS %s INTEGER NOT NULL DEFAULT 0`, col)
+				stmt := fmt.Sprintf(`ALTER TABLE roborev.reviews ADD COLUMN IF NOT EXISTS %s INTEGER`, col)
 				if _, err = p.pool.Exec(ctx, stmt); err != nil {
 					return fmt.Errorf("migrate to v13 (add %s column to reviews): %w", col, err)
 				}
@@ -846,7 +850,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
 			r.updated_by_machine_id, r.created_at, r.updated_at, r.id,
-			r.high_count, r.medium_count, r.low_count
+			COALESCE(r.high_count, 0), COALESCE(r.medium_count, 0), COALESCE(r.low_count, 0)
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)

@@ -538,14 +538,16 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 }
 
 // BackfillFindingCounts populates high_count, medium_count, and low_count for
-// reviews where all three are zero AND the output is non-empty (i.e. any review
-// that was inserted before the columns existed and may have findings to count).
+// reviews where any column is still NULL (i.e. rows inserted before the columns
+// existed). Every matching row is written unconditionally so that NULL becomes
+// a concrete value — including 0 for parsed-clean reviews — preventing the
+// predicate from matching the same rows on subsequent startups.
 // Returns the number of rows updated.
 func (db *DB) BackfillFindingCounts() (int, error) {
 	rows, err := db.Query(`
 		SELECT id, output FROM reviews
 		WHERE output != ''
-		  AND high_count = 0 AND medium_count = 0 AND low_count = 0
+		  AND (high_count IS NULL OR medium_count IS NULL OR low_count IS NULL)
 	`)
 	if err != nil {
 		return 0, err
@@ -564,12 +566,6 @@ func (db *DB) BackfillFindingCounts() (int, error) {
 			return 0, err
 		}
 		h, m, l := CountFindings(output)
-		// Only enqueue updates for rows that actually have findings;
-		// rows with all-zero counts don't need a write and would otherwise
-		// be re-processed on every startup (the SELECT predicate matches them).
-		if h+m+l == 0 {
-			continue
-		}
 		updates = append(updates, pending{id: id, h: h, m: m, l: l})
 	}
 	if err := rows.Err(); err != nil {

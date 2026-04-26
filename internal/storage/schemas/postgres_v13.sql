@@ -80,9 +80,9 @@ CREATE TABLE IF NOT EXISTS roborev.reviews (
   updated_by_machine_id UUID NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  high_count INTEGER NOT NULL DEFAULT 0,
-  medium_count INTEGER NOT NULL DEFAULT 0,
-  low_count INTEGER NOT NULL DEFAULT 0
+  high_count INTEGER,
+  medium_count INTEGER,
+  low_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS roborev.responses (

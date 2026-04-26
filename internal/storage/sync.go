@@ -467,7 +467,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
 			r.updated_by_machine_id, r.created_at, r.updated_at,
-			r.high_count, r.medium_count, r.low_count
+			COALESCE(r.high_count, 0), COALESCE(r.medium_count, 0), COALESCE(r.low_count, 0)
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?

@@ -465,18 +465,20 @@ func TestBackfillFindingCounts(t *testing.T) {
 - Medium: missing error check
 - Low - typo in comment`
 
-	// Insert review row with zero counts (simulates legacy data)
+	// Insert review row with NULL counts (simulates a row from before the
+	// columns existed — what the migration ALTER TABLE ADD COLUMN leaves
+	// behind for pre-existing rows).
 	_, err = db.Exec(
 		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
-		 VALUES (?, ?, ?, ?, 0, 0, 0)`,
+		 VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
 		job.ID, "test", "p", output,
 	)
 	require.NoError(t, err)
 
-	// Insert a "clean" review (non-empty output but no severity markers).
-	// This row will match the SELECT predicate but CountFindings returns
-	// (0,0,0), so it must be skipped — otherwise we'd re-process it on
-	// every daemon startup forever.
+	// Insert a "clean" pre-existing review (non-empty output, no findings).
+	// CountFindings returns (0,0,0), and we still write that back so the
+	// columns become non-NULL — preventing this row from re-matching the
+	// IS NULL predicate on every daemon startup.
 	cleanCommit, _ := db.GetOrCreateCommit(repo.ID, "def456", "bob", "tidy", time.Now())
 	cleanJob, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: cleanCommit.ID, GitRef: "def456", Agent: "test",
@@ -484,14 +486,14 @@ func TestBackfillFindingCounts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
-		 VALUES (?, ?, ?, ?, 0, 0, 0)`,
+		 VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
 		cleanJob.ID, "test", "p", "LGTM, no issues found.",
 	)
 	require.NoError(t, err)
 
 	updated, err := db.BackfillFindingCounts()
 	require.NoError(t, err)
-	assert.Equal(t, 1, updated, "should backfill only the row with findings")
+	assert.Equal(t, 2, updated, "should backfill both NULL rows (one with findings, one clean)")
 
 	var h, m, l int
 	require.NoError(t, db.QueryRow(
@@ -501,7 +503,8 @@ func TestBackfillFindingCounts(t *testing.T) {
 	assert.Equal(t, 1, m)
 	assert.Equal(t, 1, l)
 
-	// Clean review keeps (0,0,0) — was skipped, not corrupted.
+	// Clean review now has explicit (0,0,0) instead of NULL — non-NULL means
+	// "parsed and confirmed empty", and the predicate no longer matches it.
 	require.NoError(t, db.QueryRow(
 		`SELECT high_count, medium_count, low_count FROM reviews WHERE job_id = ?`, cleanJob.ID,
 	).Scan(&h, &m, &l))
@@ -509,7 +512,8 @@ func TestBackfillFindingCounts(t *testing.T) {
 	assert.Equal(t, 0, m)
 	assert.Equal(t, 0, l)
 
-	// Idempotent: a second run touches no rows (clean row stays skipped).
+	// Idempotent: a second run touches no rows because every row's columns
+	// are now non-NULL.
 	updated, err = db.BackfillFindingCounts()
 	require.NoError(t, err)
 	assert.Equal(t, 0, updated, "second run should be no-op")

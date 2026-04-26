@@ -1043,7 +1043,7 @@ func TestCountJobStats_FindingAggregation(t *testing.T) {
 	insertReview(rB.ID, "b1", 7, 8, 9) // should NOT count when filtering rA
 
 	t.Run("aggregates only the filtered repo", func(t *testing.T) {
-		stats, err := db.CountJobStats("/tmp/repo-a")
+		stats, err := db.CountJobStats(rA.RootPath)
 		require.NoError(t, err)
 		assert.Equal(t, 3, stats.Done)
 		assert.Equal(t, 3, stats.HighFindings)   // 2+1+0

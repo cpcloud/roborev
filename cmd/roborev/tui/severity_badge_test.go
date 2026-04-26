@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,9 +35,9 @@ func TestRenderSeverityBadge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			out := renderSeverityBadge(tt.h, tt.m, tt.l)
 			plain := stripANSI(out)
-			assert.Equal(t, tt.wantPlainTextLen, len(plain), "plain text length: got %q", plain)
+			assert.Len(t, plain, tt.wantPlainTextLen, "plain text length: got %q", plain)
 			for _, want := range tt.wantContains {
-				assert.True(t, strings.Contains(plain, want),
+				assert.Contains(t, plain, want,
 					"want %q in %q", want, plain)
 			}
 		})

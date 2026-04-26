@@ -18,7 +18,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       rv.high_count, rv.medium_count, rv.low_count,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0),
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
@@ -58,7 +58,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       rv.high_count, rv.medium_count, rv.low_count,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0),
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
@@ -96,7 +96,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	rows, err := db.Query(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed,
-		       rv.high_count, rv.medium_count, rv.low_count
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.git_ref = ?
@@ -126,7 +126,7 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error) {
 	rows, err := db.Query(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed,
-		       rv.high_count, rv.medium_count, rv.low_count
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.repo_id = ?
@@ -361,7 +361,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	// Fetch reviews for these jobs
 	reviewQuery := fmt.Sprintf(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.verdict_bool,
-		       rv.high_count, rv.medium_count, rv.low_count
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		WHERE rv.job_id IN (%s)
 	`, inClause)
@@ -407,7 +407,7 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 
 	err := db.QueryRow(`
 		SELECT id, job_id, agent, prompt, output, created_at, closed,
-		       high_count, medium_count, low_count
+		       COALESCE(high_count, 0), COALESCE(medium_count, 0), COALESCE(low_count, 0)
 		FROM reviews WHERE id = ?
 	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed,
 		&fields.HighCount, &fields.MediumCount, &fields.LowCount)

@@ -598,9 +598,11 @@ func TestTUIJobCellsContent(t *testing.T) {
 		job.Closed = &handled
 
 		cells := m.jobCells(job)
+		// cells: ref(0), branch(1), repo(2), agent(3), queued(4),
+		// elapsed(5), status(6), pf(7), findings(8), handled(9), session(10), ...
 		assert.Equal(t, "Done", cells[6])
 		assert.Equal(t, "P", cells[7])
-		assert.Equal(t, "yes", cells[8])
+		assert.Equal(t, "yes", cells[9])
 	})
 }
 
@@ -2200,16 +2202,16 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantColOrder: nil,
 		},
 		{
-			name:         "custom order preserved",
+			name:         "custom order has findings inserted after pf",
 			columnOrder:  []string{"repo", "ref", "agent", "status", "pf", "queued", "elapsed", "branch", "closed"},
-			wantDirty:    false,
-			wantColOrder: []string{"repo", "ref", "agent", "status", "pf", "queued", "elapsed", "branch", "closed"},
+			wantDirty:    true,
+			wantColOrder: []string{"repo", "ref", "agent", "status", "pf", "findings", "queued", "elapsed", "branch", "closed"},
 		},
 		{
-			name:         "current default order preserved",
+			name:         "current default order has findings inserted after pf",
 			columnOrder:  []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
-			wantDirty:    false,
-			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
+			wantDirty:    true,
+			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "findings", "closed"},
 		},
 		{
 			name:        "stale hidden_columns backfills only new columns",

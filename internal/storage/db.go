@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS reviews (
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  closed INTEGER NOT NULL DEFAULT 0
+  closed INTEGER NOT NULL DEFAULT 0,
+  high_count INTEGER NOT NULL DEFAULT 0,
+  medium_count INTEGER NOT NULL DEFAULT 0,
+  low_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -827,6 +830,31 @@ func (db *DB) migrate() error {
 	// pre-existing duplicates would block index creation.
 	if err := db.ensureCIPRBatchJobsUniqueIndex(); err != nil {
 		return fmt.Errorf("ensure ci_pr_batch_jobs unique index: %w", err)
+	}
+
+	// Migration: add high_count, medium_count, low_count columns to reviews if missing.
+	// Backfill is performed by BackfillFindingCounts (called below).
+	for _, col := range []string{"high_count", "medium_count", "low_count"} {
+		err = db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = ?`, col,
+		).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column in reviews: %w", col, err)
+		}
+		if count == 0 {
+			_, err = db.Exec(
+				fmt.Sprintf(`ALTER TABLE reviews ADD COLUMN %s INTEGER NOT NULL DEFAULT 0`, col),
+			)
+			if err != nil {
+				return fmt.Errorf("add %s column: %w", col, err)
+			}
+		}
+	}
+	// Backfill counts for any rows where all three columns are still zero
+	// AND the output is non-empty. Idempotent: re-running on a fully populated
+	// DB processes nothing.
+	if _, err := db.BackfillFindingCounts(); err != nil {
+		return fmt.Errorf("backfill finding counts: %w", err)
 	}
 
 	return nil

@@ -537,6 +537,73 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	return len(updates), nil
 }
 
+// BackfillFindingCounts populates high_count, medium_count, and low_count for
+// reviews where all three are zero AND the output is non-empty (i.e. any review
+// that was inserted before the columns existed and may have findings to count).
+// Returns the number of rows updated.
+func (db *DB) BackfillFindingCounts() (int, error) {
+	rows, err := db.Query(`
+		SELECT id, output FROM reviews
+		WHERE output != ''
+		  AND high_count = 0 AND medium_count = 0 AND low_count = 0
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type pending struct {
+		id      int64
+		h, m, l int
+	}
+	var updates []pending
+	for rows.Next() {
+		var id int64
+		var output string
+		if err := rows.Scan(&id, &output); err != nil {
+			return 0, err
+		}
+		h, m, l := CountFindings(output)
+		// Only enqueue updates for rows that actually have findings;
+		// rows with all-zero counts don't need a write and would otherwise
+		// be re-processed on every startup (the SELECT predicate matches them).
+		if h+m+l == 0 {
+			continue
+		}
+		updates = append(updates, pending{id: id, h: h, m: m, l: l})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(
+		`UPDATE reviews SET high_count = ?, medium_count = ?, low_count = ? WHERE id = ?`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.h, u.m, u.l, u.id); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(updates), nil
+}
+
 // categorizeError maps error messages to categories.
 func categorizeError(errMsg string) string {
 	lower := strings.ToLower(errMsg)

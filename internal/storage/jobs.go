@@ -890,19 +890,25 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 // GetJobByID returns a job by ID with joined fields
 // JobStats holds aggregate counts for the queue status line.
 type JobStats struct {
-	Done   int `json:"done"`
-	Closed int `json:"closed"`
-	Open   int `json:"open"`
+	Done           int `json:"done"`
+	Closed         int `json:"closed"`
+	Open           int `json:"open"`
+	HighFindings   int `json:"high_findings"`
+	MediumFindings int `json:"medium_findings"`
+	LowFindings    int `json:"low_findings"`
 }
 
-// CountJobStats returns aggregate done/closed/open counts
-// using the same filter logic as ListJobs (repo, branch, closed).
+// CountJobStats returns aggregate done/closed/open counts and per-severity
+// finding sums using the same filter logic as ListJobs (repo, branch, closed).
 func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(rv.high_count), 0),
+			COALESCE(SUM(rv.medium_count), 0),
+			COALESCE(SUM(rv.low_count), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -911,7 +917,10 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 	query += queryFilters
 
 	var stats JobStats
-	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Closed, &stats.Open)
+	err := db.QueryRow(query, args...).Scan(
+		&stats.Done, &stats.Closed, &stats.Open,
+		&stats.HighFindings, &stats.MediumFindings, &stats.LowFindings,
+	)
 	return stats, err
 }
 

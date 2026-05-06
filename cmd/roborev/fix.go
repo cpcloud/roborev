@@ -141,6 +141,7 @@ Examples:
 				minSeverity: minSeverity,
 				quiet:       quiet,
 				resume:      resume,
+				classify:    agent.ClassifyLimit,
 			}
 
 			roots, err := resolveCurrentRepoRoots()
@@ -228,6 +229,81 @@ type fixOptions struct {
 	minSeverity string
 	quiet       bool
 	resume      bool
+
+	// classify is the rate-limit classifier. Defaults to
+	// agent.ClassifyLimit in the production cobra command's RunE; tests
+	// inject a stub to drive deterministic KindQuota / KindSession
+	// outcomes without depending on real agent error wording.
+	classify agent.LimitClassifier
+}
+
+// agentLimitError is returned by the fix loop when the configured agent
+// hits a quota or session limit. The fix command surfaces it as the
+// process exit error so users see the reset time and a hint to retry.
+type agentLimitError struct {
+	Classification agent.LimitClassification
+}
+
+func (e *agentLimitError) Error() string {
+	return formatAgentLimitMessage(e.Classification, time.Now())
+}
+
+// formatAgentLimitMessage builds the user-facing abort message. Pulled
+// out so tests can assert against it without depending on time.Now.
+// The label ("quota" / "session limit" / "rate limit") is derived from
+// cls.Kind so a Gemini/Codex KindQuota abort doesn't mis-report itself
+// as a session-cap.
+func formatAgentLimitMessage(cls agent.LimitClassification, now time.Time) string {
+	label := agentLimitLabel(cls.Kind)
+	var dur time.Duration
+	switch {
+	case !cls.ResetAt.IsZero():
+		dur = cls.ResetAt.Sub(now)
+	case cls.CooldownFor > 0:
+		dur = cls.CooldownFor
+	}
+	switch {
+	case dur > 0 && !cls.ResetAt.IsZero():
+		return fmt.Sprintf(
+			"agent %s hit a %s. Cooldown until %s (in %s). "+
+				"Re-run after that, or pass --agent <other> to switch.",
+			cls.Agent,
+			label,
+			cls.ResetAt.Format("3:04 PM"),
+			dur.Round(time.Minute),
+		)
+	case dur > 0:
+		return fmt.Sprintf(
+			"agent %s hit a %s. Cooldown for ~%s. "+
+				"Re-run after that, or pass --agent <other> to switch.",
+			cls.Agent,
+			label,
+			dur.Round(time.Minute),
+		)
+	default:
+		flat := strings.ReplaceAll(cls.Message, "\n", " ")
+		return fmt.Sprintf(
+			"agent %s hit a %s (unknown reset time). "+
+				"Re-run later, or pass --agent <other> to switch. "+
+				"Original error: %s",
+			cls.Agent,
+			label,
+			truncateString(flat, 200),
+		)
+	}
+}
+
+func agentLimitLabel(k agent.LimitKind) string {
+	switch k {
+	case agent.LimitKindSession:
+		return "session limit"
+	case agent.LimitKindQuota:
+		return "quota limit"
+	case agent.LimitKindTransient:
+		return "rate limit"
+	default:
+		return "rate limit"
+	}
 }
 
 // fixJobParams configures a fixJobDirect operation.
@@ -235,6 +311,9 @@ type fixJobParams struct {
 	RepoRoot string
 	Agent    agent.Agent
 	Output   io.Writer // agent streaming output (nil = discard)
+	// Classify is the rate-limit classifier used for the commit-retry
+	// path. nil defaults to agent.ClassifyLimit. Tests inject a stub.
+	Classify agent.LimitClassifier
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -320,6 +399,28 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		}
 	}
 	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
+		// Classify the retry error so quota/session limits abort
+		// instead of being demoted to a warning — otherwise the fix
+		// loop keeps invoking the exhausted agent on every following
+		// job until the queue is empty.
+		classify := params.Classify
+		if classify == nil {
+			classify = agent.ClassifyLimit
+		}
+		cls := classify(agent.CanonicalName(retryAgent.Name()), retryErr.Error())
+		if cls.Kind == agent.LimitKindQuota || cls.Kind == agent.LimitKindSession {
+			// The first agent call left uncommitted changes; the
+			// retry that would have committed them was aborted by
+			// the limit. Surface the dirty-tree state so the user
+			// can decide whether to commit manually before the
+			// cooldown expires — the success path emits the same
+			// warning, and bare cooldown text would otherwise hide
+			// the regression.
+			if hasChanges, _ := git.HasUncommittedChanges(params.RepoRoot); hasChanges {
+				fmt.Fprintln(out, "Warning: Changes were made but not committed. Please review and commit manually.")
+			}
+			return nil, &agentLimitError{Classification: cls}
+		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
 	}
 	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
@@ -420,6 +521,14 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 		if err != nil {
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
+			}
+			// Agent quota/session-limit aborts must propagate even in
+			// discovery mode — otherwise the re-query loop keeps
+			// invoking the exhausted agent until every queued job is
+			// burned through with the same error.
+			var lim *agentLimitError
+			if errors.As(err, &lim) {
+				return err
 			}
 			// In discovery mode (seen != nil), log a warning and
 			// continue best-effort. For explicit job IDs (seen ==
@@ -828,6 +937,9 @@ func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
+	if opts.classify == nil {
+		opts.classify = agent.ClassifyLimit
+	}
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -927,6 +1039,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		RepoRoot: repoRoot,
 		Agent:    currentAgent,
 		Output:   capture,
+		Classify: opts.classify,
 	}, buildGenericFixPrompt(review.Output, minSev, comments))
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
@@ -935,6 +1048,27 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 	if err != nil {
 		tracker.Reset()
+		// fixJobDirect already returns *agentLimitError for retry-path
+		// quota/session aborts; preserve it instead of re-classifying
+		// its user-facing message string.
+		var lim *agentLimitError
+		if errors.As(err, &lim) {
+			return err
+		}
+		cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
+		switch cls.Kind {
+		case agent.LimitKindQuota, agent.LimitKindSession:
+			return &agentLimitError{Classification: cls}
+		case agent.LimitKindNone:
+			if err.Error() != "" && !opts.quiet {
+				flat := strings.ReplaceAll(err.Error(), "\n", " ")
+				cmd.PrintErrf(
+					"warning: unclassified agent error from %s: %s\n",
+					currentAgent.Name(),
+					truncateString(flat, 200),
+				)
+			}
+		}
 		return err
 	}
 	tracker.Capture(capture.SessionID())
@@ -1003,6 +1137,9 @@ type batchEntry struct {
 // the keep-going behavior of runFixOpen so reviews that complete mid-run get
 // picked up. With explicit jobIDs the function processes the list once.
 func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
+	if opts.classify == nil {
+		opts.classify = agent.ClassifyLimit
+	}
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
@@ -1210,6 +1347,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			RepoRoot: roots.worktreeRoot,
 			Agent:    currentAgent,
 			Output:   capture,
+			Classify: opts.classify,
 		}, prompt)
 		// Flush capture FIRST so session extraction completes before reading SessionID.
 		capture.Flush()
@@ -1218,6 +1356,26 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		}
 		if err != nil {
 			tracker.Reset()
+			// Preserve a retry-path agentLimitError without
+			// re-classifying its user-facing message string.
+			var lim *agentLimitError
+			if errors.As(err, &lim) {
+				return err
+			}
+			cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
+			switch cls.Kind {
+			case agent.LimitKindQuota, agent.LimitKindSession:
+				return &agentLimitError{Classification: cls}
+			case agent.LimitKindNone:
+				if err.Error() != "" && !opts.quiet {
+					flat := strings.ReplaceAll(err.Error(), "\n", " ")
+					cmd.PrintErrf(
+						"warning: unclassified agent error from %s: %s\n",
+						currentAgent.Name(),
+						truncateString(flat, 200),
+					)
+				}
+			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
 			continue
 		}

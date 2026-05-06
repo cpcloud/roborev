@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -913,115 +915,6 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	}
 }
 
-func TestIsQuotaError(t *testing.T) {
-	tests := []struct {
-		errMsg string
-		want   bool
-	}{
-		// Hard quota exhaustion — should trigger cooldown/skip
-		{"quota exceeded for model", true},
-		{"QUOTA_EXCEEDED: limit reached", true},
-		{"quota exhausted, reset after 8h", true},
-		{"QUOTA_EXHAUSTED: try later", true},
-		{"insufficient_quota: limit reached", true},
-		{"You have exhausted your capacity", true},
-		{"RESOURCE EXHAUSTED: try later", true},
-		{"MODEL_CAPACITY_EXHAUSTED: The model is overloaded", true},
-		{"capacity_exhausted", true},
-		// Transient rate limits — should NOT trigger cooldown (use retries)
-		{"Rate limit reached", false},
-		{"rate_limit_error: too fast", false},
-		{"Too Many Requests (429)", false},
-		{"HTTP 429: slow down", false},
-		{"status 429 received from API", false},
-		// Other non-quota errors
-		{"connection reset by peer", false},
-		{"timeout after 30s", false},
-		{"agent not found", false},
-		{"disk quota full", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.errMsg, func(t *testing.T) {
-			if got := isQuotaError(tt.errMsg); got != tt.want {
-				assert.Condition(t, func() bool {
-					return false
-				}, "isQuotaError(%q) = %v, want %v",
-					tt.errMsg, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseQuotaCooldown(t *testing.T) {
-	tests := []struct {
-		name     string
-		errMsg   string
-		fallback time.Duration
-		want     time.Duration
-	}{
-		{
-			name:     "extracts go duration",
-			errMsg:   "quota exhausted, reset after 8h26m13s please wait",
-			fallback: 30 * time.Minute,
-			want:     8*time.Hour + 26*time.Minute + 13*time.Second,
-		},
-		{
-			name:     "no reset token falls back",
-			errMsg:   "quota exceeded for model gemini-2.5-pro",
-			fallback: 30 * time.Minute,
-			want:     30 * time.Minute,
-		},
-		{
-			name:     "unparseable duration falls back",
-			errMsg:   "reset after bogus",
-			fallback: 15 * time.Minute,
-			want:     15 * time.Minute,
-		},
-		{
-			name:     "duration at end of string",
-			errMsg:   "reset after 2h30m",
-			fallback: 30 * time.Minute,
-			want:     2*time.Hour + 30*time.Minute,
-		},
-		{
-			name:     "trailing punctuation trimmed",
-			errMsg:   "reset after 8h26m13s.",
-			fallback: 30 * time.Minute,
-			want:     8*time.Hour + 26*time.Minute + 13*time.Second,
-		},
-		{
-			name:     "trailing paren trimmed",
-			errMsg:   "reset after 1h30m)",
-			fallback: 30 * time.Minute,
-			want:     1*time.Hour + 30*time.Minute,
-		},
-		{
-			name:     "clamped to max 24h",
-			errMsg:   "reset after 99999h",
-			fallback: 30 * time.Minute,
-			want:     24 * time.Hour,
-		},
-		{
-			name:     "clamped to min 1m",
-			errMsg:   "reset after 5s",
-			fallback: 30 * time.Minute,
-			want:     1 * time.Minute,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseQuotaCooldown(tt.errMsg, tt.fallback)
-			if got != tt.want {
-				assert.Condition(t, func() bool {
-					return false
-				}, "parseQuotaCooldown() = %v, want %v",
-					got, tt.want)
-			}
-		})
-	}
-}
-
 func TestAgentCooldown(t *testing.T) {
 	cfg := config.DefaultConfig()
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
@@ -1297,6 +1190,63 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 			return false
 		}, "expected gemini NOT in cooldown for non-quota error")
 	}
+}
+
+func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	// Stub classifier: any error message containing the marker yields
+	// KindSession with a 1-hour CooldownFor. Tests the seam without
+	// depending on real Claude wording.
+	tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+		if strings.Contains(msg, "MARKER-SESSION-LIMIT") {
+			return agent.LimitClassification{
+				Kind:        agent.LimitKindSession,
+				Agent:       agentName,
+				CooldownFor: 1 * time.Hour,
+				Message:     msg,
+			}
+		}
+		return agent.LimitClassification{Kind: agent.LimitKindNone, Agent: agentName, Message: msg}
+	}
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "boom MARKER-SESSION-LIMIT")
+
+	assert := assert.New(t)
+	assert.True(tc.Pool.isAgentCoolingDown("test"), "agent should be in cooldown")
+
+	// retry_count must NOT have advanced — quota/session errors skip
+	// retries entirely (matches the original isQuotaError semantics).
+	got, err := tc.DB.GetJobRetryCount(job.ID)
+	require.NoError(t, err)
+	assert.Equal(0, got, "session-limit error must not consume a retry slot")
+}
+
+func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	// Capture log output by swapping the standard logger's writer.
+	var buf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(origOutput) })
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+		return agent.LimitClassification{Kind: agent.LimitKindNone, Agent: agentName, Message: msg}
+	}
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "some brand new error wording from a future agent")
+
+	logged := buf.String()
+	assert := assert.New(t)
+	assert.Contains(logged, "unclassified agent error", "expected WARN line for unmatched error")
+	assert.Contains(logged, "from test:", "log line should include agent name as 'from <agent>:'")
+	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
 }
 
 func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {

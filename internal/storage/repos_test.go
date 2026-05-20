@@ -1046,7 +1046,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 				}
 			}
 
-			retried, err := db.RetryJob(claimed.ID, "", 3)
+			retried, err := db.RetryJob(claimed.ID, "", 3, 0)
 			require.NoError(t, err, "RetryJob failed: %v")
 
 			assert.True(t, retried)

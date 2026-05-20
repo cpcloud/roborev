@@ -108,7 +108,7 @@ func TestRetryJobOwnerScoped(t *testing.T) {
 	claimJob(t, env.db, "worker-1")
 
 	// Wrong worker should not be able to retry the job
-	retried, err := env.db.RetryJob(env.job.ID, "worker-2", 3)
+	retried, err := env.db.RetryJob(env.job.ID, "worker-2", 3, 0)
 	require.NoError(t, err, "RetryJob with wrong worker failed")
 
 	assert.False(t, retried)
@@ -120,7 +120,7 @@ func TestRetryJobOwnerScoped(t *testing.T) {
 	assert.Equal(t, JobStatusRunning, j.Status)
 
 	// Correct worker should succeed
-	retried, err = env.db.RetryJob(env.job.ID, "worker-1", 3)
+	retried, err = env.db.RetryJob(env.job.ID, "worker-1", 3, 0)
 	require.NoError(t, err, "RetryJob with correct worker failed")
 
 	assert.True(t, retried)
@@ -344,7 +344,7 @@ func TestRetryJob(t *testing.T) {
 	claimJob(t, db, "worker-1")
 
 	// Retry should succeed (retry_count: 0 -> 1)
-	retried, err := db.RetryJob(job.ID, "", 3)
+	retried, err := db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob failed: %v")
 
 	assert.True(t, retried)
@@ -357,16 +357,16 @@ func TestRetryJob(t *testing.T) {
 
 	// Claim again and retry twice more (retry_count: 1->2, 2->3)
 	_, _ = db.ClaimJob("worker-1")
-	db.RetryJob(job.ID, "", 3) // retry_count becomes 2
+	db.RetryJob(job.ID, "", 3, 0) // retry_count becomes 2
 	_, _ = db.ClaimJob("worker-1")
-	db.RetryJob(job.ID, "", 3) // retry_count becomes 3
+	db.RetryJob(job.ID, "", 3, 0) // retry_count becomes 3
 
 	count, _ = db.GetJobRetryCount(job.ID)
 	assert.Equal(t, 3, count)
 
 	// Claim again - next retry should fail (at max)
 	_, _ = db.ClaimJob("worker-1")
-	retried, err = db.RetryJob(job.ID, "", 3)
+	retried, err = db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob at max failed: %v")
 
 	assert.False(t, retried)
@@ -383,7 +383,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-status")
 
 	// Try to retry a queued job (should fail - not running)
-	retried, err := db.RetryJob(job.ID, "", 3)
+	retried, err := db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob on queued job failed: %v")
 
 	assert.False(t, retried)
@@ -392,7 +392,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	_, _ = db.ClaimJob("worker-1")
 	db.CompleteJob(job.ID, "codex", "p", "o")
 
-	retried, err = db.RetryJob(job.ID, "", 3)
+	retried, err = db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob on done job failed: %v")
 
 	assert.False(t, retried)
@@ -407,8 +407,8 @@ func TestRetryJobAtomic(t *testing.T) {
 
 	// Simulate two concurrent retries - only first should succeed
 	// (In practice this tests the atomic update)
-	retried1, _ := db.RetryJob(job.ID, "", 3)
-	retried2, _ := db.RetryJob(job.ID, "", 3) // Job is now queued, not running
+	retried1, _ := db.RetryJob(job.ID, "", 3, 0)
+	retried2, _ := db.RetryJob(job.ID, "", 3, 0) // Job is now queued, not running
 
 	assert.True(t, retried1)
 	assert.False(t, retried2, "Second retry should fail (job is no longer running)")
@@ -416,6 +416,58 @@ func TestRetryJobAtomic(t *testing.T) {
 	// Verify retry_count is 1, not 2
 	count, _ := db.GetJobRetryCount(job.ID)
 	assert.Equal(t, 1, count)
+}
+
+func TestRetryJobBackoffDefersClaim(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-backoff")
+	claimJob(t, db, "worker-1")
+
+	// Long backoff so the test isn't racing the wall clock — we only
+	// check that ClaimJob refuses to return jobs whose retry_not_before
+	// hasn't elapsed.
+	retried, err := db.RetryJob(job.ID, "worker-1", 3, time.Hour)
+	require.NoError(t, err)
+	require.True(t, retried)
+
+	skipped, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	assert.Nil(t, skipped, "ClaimJob must not return jobs still in their retry backoff window")
+
+	// Once the gate is in the past, the same job is claimable. Set the
+	// column directly instead of sleeping a real backoff — we're testing
+	// the predicate, not the clock.
+	past := time.Now().Add(-time.Minute).Format(time.RFC3339Nano)
+	_, err = db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, past, job.ID)
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, job.ID, claimed.ID)
+}
+
+func TestRetryJobZeroBackoffLeavesNotBeforeNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-no-backoff")
+	claimJob(t, db, "worker-1")
+
+	retried, err := db.RetryJob(job.ID, "worker-1", 3, 0)
+	require.NoError(t, err)
+	require.True(t, retried)
+
+	var stored sql.NullString
+	require.NoError(t, db.QueryRow(`SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
+	assert.False(t, stored.Valid, "zero backoff should leave retry_not_before NULL")
+
+	claimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, job.ID, claimed.ID)
 }
 
 func TestFailoverJob(t *testing.T) {
@@ -451,6 +503,32 @@ func TestFailoverJob(t *testing.T) {
 		assert.Equal(t, JobStatusQueued, updated.Status)
 		count, _ := db.GetJobRetryCount(job.ID)
 		assert.Equal(t, 0, count)
+	})
+
+	t.Run("clears retry_not_before on failover", func(t *testing.T) {
+		// Switching agents resets the retry path, so any prior backoff
+		// gate left by RetryJob should be cleared. Otherwise the new
+		// agent can't even be claimed until the old gate expires.
+		db := openTestDB(t)
+		defer db.Close()
+
+		_, _, job := createJobChain(t, db, "/tmp/failover-backoff", "fo-backoff")
+		claimJob(t, db, "worker-1")
+
+		// Stamp a far-future retry_not_before to simulate a job that
+		// hit its retry backoff right before failover took over.
+		future := time.Now().Add(30 * time.Second).Format(time.RFC3339)
+		_, err := db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, future, job.ID)
+		require.NoError(t, err)
+
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		claimed, err := db.ClaimJob("worker-2")
+		require.NoError(t, err)
+		require.NotNil(t, claimed, "failover should clear retry_not_before so the new agent is claimable")
+		assert.Equal(t, "backup", claimed.Agent)
 	})
 
 	t.Run("clears model on failover", func(t *testing.T) {

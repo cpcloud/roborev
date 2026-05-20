@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 12
+const pgSchemaVersion = 13
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v12.sql
+//go:embed schemas/postgres_v13.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -335,6 +335,11 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				ON review_jobs(repo_id, git_ref, review_type)
 				WHERE source = 'auto_design' AND commit_id IS NULL`); err != nil {
 				return fmt.Errorf("v12 migration (add dedup ref index): %w", err)
+			}
+		}
+		if currentVersion < 13 {
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS retry_not_before TIMESTAMP WITH TIME ZONE`); err != nil {
+				return fmt.Errorf("v13 migration (add retry_not_before): %w", err)
 			}
 		}
 		// Update version

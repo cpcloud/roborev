@@ -808,6 +808,21 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add retry_not_before column to review_jobs if missing.
+	// ClaimJob skips jobs whose retry_not_before is in the future so the
+	// retry backoff is enforced at the queue level, regardless of which
+	// worker happened to fail the prior attempt.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'retry_not_before'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check retry_not_before column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN retry_not_before TIMESTAMP`)
+		if err != nil {
+			return fmt.Errorf("add retry_not_before column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

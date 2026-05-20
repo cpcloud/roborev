@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -60,6 +61,7 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 
 	b := NewBroadcaster()
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), cfg.MaxWorkers, b, nil, nil)
+	pool.retryBackoff = 0 // keep retry-driven tests fast
 
 	return &workerTestContext{
 		DB:          db,
@@ -162,6 +164,7 @@ func (c *workerTestContext) startPool() {
 // and 1 worker, preserving the existing DB and broadcaster.
 func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
 	c.Pool = NewWorkerPool(c.DB, NewStaticConfig(cfg), 1, c.Broadcaster, nil, nil)
+	c.Pool.retryBackoff = 0
 }
 
 func TestWorkerPoolConcurrency(t *testing.T) {
@@ -1303,6 +1306,46 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	assert.Contains(logged, "unclassified agent error", "expected WARN line for unmatched error")
 	assert.Contains(logged, "from test:", "log line should include agent name as 'from <agent>:'")
 	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
+}
+
+func TestFailOrRetryInner_SetsRetryNotBefore(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	// A long backoff makes the test robust to setup overhead. We don't
+	// wait for it to elapse — we just verify the column is populated and
+	// is in the future.
+	tc.Pool.retryBackoff = time.Hour
+
+	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "connection reset", true)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+
+	var stored sql.NullString
+	require.NoError(t, tc.DB.QueryRow(`SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
+	require.True(t, stored.Valid, "retry_not_before should be set with non-zero retryBackoff")
+
+	parsed, err := time.Parse(time.RFC3339Nano, stored.String)
+	require.NoError(t, err, "retry_not_before should be RFC3339Nano-formatted")
+	assert.True(t, parsed.After(time.Now()),
+		"retry_not_before should be in the future, got %s", stored.String)
+}
+
+func TestClaimJob_HonorsRetryNotBeforeAcrossWorkers(t *testing.T) {
+	// A different worker than the one that failed must also be blocked
+	// by retry_not_before — that's the whole point of moving the gate
+	// from a per-worker sleep to a job column.
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, "worker-A")
+
+	tc.Pool.retryBackoff = time.Hour
+	tc.Pool.failOrRetryInner("worker-A", job, "gemini", "connection reset", true)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+
+	claimed, err := tc.DB.ClaimJob("worker-B")
+	require.NoError(t, err)
+	assert.Nil(t, claimed, "a second worker must also honor retry_not_before")
 }
 
 func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {

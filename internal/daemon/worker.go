@@ -55,6 +55,14 @@ type WorkerPool struct {
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
 
+	// retryBackoff is the delay applied to requeued jobs before they
+	// become claimable again. Stored on the job (via retry_not_before)
+	// so any worker — not just the one that failed — honors it. Prevents
+	// rapid concurrent agent startups racing on shared state (notably
+	// opencode's sqlite WAL, where PRAGMA wal_checkpoint(PASSIVE) fails
+	// when a prior crashed instance left the WAL mid-write).
+	retryBackoff time.Duration
+
 	// Test hooks for deterministic synchronization (nil in production)
 	testHookAfterSecondCheck    func() // Called after second runningJobs check, before second DB lookup
 	testHookCooldownLockUpgrade func() // Called between RUnlock and Lock in isAgentCoolingDown
@@ -76,6 +84,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		agentCooldowns: make(map[string]time.Time),
 		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
 		classify:       agent.ClassifyLimit,
+		retryBackoff:   2 * time.Second,
 	}
 }
 
@@ -851,7 +860,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		return
 	}
 
-	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries)
+	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries, wp.retryBackoff)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
 		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {

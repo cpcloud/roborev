@@ -21,6 +21,10 @@ import (
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
 func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
+	// Errors from here on are runtime failures (job failure, network blip,
+	// canceled), never argument-parsing errors — suppress the --help dump
+	// Cobra would otherwise tack onto the error.
+	cmd.SilenceUsage = true
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -28,7 +32,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(5*time.Second))
 
 	if !quiet {
-		cmd.Printf("Waiting for review to complete...")
+		fmt.Fprint(cmd.OutOrStdout(), "Waiting for review to complete...")
 	}
 
 	// Poll with exponential backoff
@@ -46,20 +50,20 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		switch job.Status {
 		case storage.JobStatusDone:
 			if !quiet {
-				cmd.Printf(" done!\n\n")
+				fmt.Fprint(cmd.OutOrStdout(), " done!\n\n")
 			}
 			// Fetch and display the review
 			return showReview(cmd, ep, jobID, quiet)
 
 		case storage.JobStatusFailed:
 			if !quiet {
-				cmd.Printf(" failed!\n")
+				fmt.Fprint(cmd.OutOrStdout(), " failed!\n")
 			}
 			return fmt.Errorf("review failed: %s", job.Error)
 
 		case storage.JobStatusCanceled:
 			if !quiet {
-				cmd.Printf(" canceled!\n")
+				fmt.Fprint(cmd.OutOrStdout(), " canceled!\n")
 			}
 			return fmt.Errorf("review was canceled")
 
@@ -81,7 +85,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 				return fmt.Errorf("received unknown status %q %d times, giving up (daemon may be newer than CLI)", job.Status, unknownStatusCount)
 			}
 			if !quiet {
-				cmd.Printf("\n(unknown status %q, continuing to poll...)", job.Status)
+				fmt.Fprintf(cmd.OutOrStdout(), "\n(unknown status %q, continuing to poll...)", job.Status)
 			}
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
@@ -108,9 +112,9 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	}
 
 	if !quiet {
-		cmd.Printf("Review (by %s)\n", review.Agent)
-		cmd.Println(strings.Repeat("-", 60))
-		cmd.Println(review.Output)
+		fmt.Fprintf(cmd.OutOrStdout(), "Review (by %s)\n", review.Agent)
+		fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 60))
+		fmt.Fprintln(cmd.OutOrStdout(), review.Output)
 	}
 
 	// Return exit code based on verdict

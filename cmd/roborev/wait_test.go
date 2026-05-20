@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -155,6 +156,39 @@ func TestWaitArgValidationWithoutDaemon(t *testing.T) {
 
 	_, err = runWait(t, "--sha", "not-a-valid-ref")
 	assertErrorContains(t, err, "invalid git ref")
+}
+
+// TestWaitForJob_SilencesUsageOnFailure verifies that waitForJob marks the
+// command to suppress Cobra's usage dump for runtime failures (failed job,
+// canceled job, network errors). Without this, every legitimate agent failure
+// is followed by the full --help blob.
+func TestWaitForJob_SilencesUsageOnFailure(t *testing.T) {
+	setupFastPolling(t)
+
+	cases := []struct {
+		name   string
+		status storage.JobStatus
+		errMsg string
+		want   string
+	}{
+		{"failed", storage.JobStatusFailed, "agent crashed", "review failed"},
+		{"canceled", storage.JobStatusCanceled, "", "canceled"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newWaitEnv(t, newWaitMockHandler(mockConfig{
+				Jobs: []storage.ReviewJob{{ID: 1, Agent: "test", Status: tc.status, Error: tc.errMsg}},
+			}))
+
+			cmd := &cobra.Command{}
+			err := waitForJob(cmd, getDaemonEndpoint(), 1, true)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.True(t, cmd.SilenceUsage,
+				"SilenceUsage should be set so Cobra does not dump --help after a runtime failure")
+		})
+	}
 }
 
 func TestWait_Scenarios(t *testing.T) {

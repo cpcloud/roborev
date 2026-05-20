@@ -11,12 +11,21 @@ import (
 )
 
 // retryNotBeforeLayout is a fixed-width timestamp layout used for the
-// retry_not_before column. Go's time.RFC3339Nano strips trailing zeros
-// from the fractional seconds (".5" instead of ".500000000"), which
-// breaks lexicographic comparison in SQL — e.g. "...:00.6-04:00" sorts
-// less than "...:00.55-04:00" because '-' < '5'. By padding to a fixed
-// 9-digit fraction, string comparison matches chronological order.
+// retry_not_before column. Two reasons it differs from RFC3339Nano:
+//   - The 9-digit padded fractional seconds avoid the RFC3339Nano quirk
+//     of stripping trailing zeros (".5" vs ".500000000"), which would
+//     break lexicographic SQL comparison around fractional widths.
+//   - Callers must format in UTC (see retryNotBeforeAt). Mixing local
+//     offsets would break comparison during DST fall-back, where the
+//     same local clock time repeats with different UTC offsets.
 const retryNotBeforeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// retryNotBeforeAt returns t formatted for the retry_not_before column.
+// Always normalizes to UTC so DST fall-back can't produce two ordered-
+// differently-but-equal local strings.
+func retryNotBeforeAt(t time.Time) string {
+	return t.UTC().Format(retryNotBeforeLayout)
+}
 
 // parseSQLiteTime parses a time string from SQLite which may be in different formats.
 // Handles RFC3339 (what we write), SQLite datetime('now') format, and timezone variants.
@@ -197,10 +206,10 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
-	// retry_not_before uses a fixed-width sub-second layout so the
-	// lexicographic SQL comparison agrees with chronological order.
-	// See retryNotBeforeLayout for why RFC3339Nano is unsafe here.
-	nowNano := now.Format(retryNotBeforeLayout)
+	// retry_not_before is stored UTC + fixed-width nano (see
+	// retryNotBeforeLayout) so the SQL comparison stays monotonic with
+	// time. Format the comparison value the same way.
+	nowNano := retryNotBeforeAt(now)
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
@@ -631,10 +640,7 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackoff time.Duration) (bool, error) {
 	var notBefore any
 	if retryBackoff > 0 {
-		// Fixed-width layout (not RFC3339Nano) so the SQL string
-		// comparison in ClaimJob agrees with chronological order
-		// for sub-second backoffs.
-		notBefore = time.Now().Add(retryBackoff).Format(retryNotBeforeLayout)
+		notBefore = retryNotBeforeAt(time.Now().Add(retryBackoff))
 	}
 
 	var result sql.Result

@@ -439,7 +439,7 @@ func TestRetryJobBackoffDefersClaim(t *testing.T) {
 	// Once the gate is in the past, the same job is claimable. Set the
 	// column directly instead of sleeping a real backoff — we're testing
 	// the predicate, not the clock.
-	past := time.Now().Add(-time.Minute).Format(retryNotBeforeLayout)
+	past := retryNotBeforeAt(time.Now().Add(-time.Minute))
 	_, err = db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, past, job.ID)
 	require.NoError(t, err)
 

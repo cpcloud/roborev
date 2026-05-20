@@ -1326,7 +1326,7 @@ func TestFailOrRetryInner_SetsRetryNotBefore(t *testing.T) {
 	require.True(t, stored.Valid, "retry_not_before should be set with non-zero retryBackoff")
 
 	parsed, err := time.Parse(time.RFC3339Nano, stored.String)
-	require.NoError(t, err, "retry_not_before should be RFC3339Nano-formatted")
+	require.NoError(t, err, "retry_not_before should parse as RFC3339-with-nanos")
 	assert.True(t, parsed.After(time.Now()),
 		"retry_not_before should be in the future, got %s", stored.String)
 }

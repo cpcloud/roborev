@@ -10,6 +10,14 @@ import (
 	"unicode"
 )
 
+// retryNotBeforeLayout is a fixed-width timestamp layout used for the
+// retry_not_before column. Go's time.RFC3339Nano strips trailing zeros
+// from the fractional seconds (".5" instead of ".500000000"), which
+// breaks lexicographic comparison in SQL — e.g. "...:00.6-04:00" sorts
+// less than "...:00.55-04:00" because '-' < '5'. By padding to a fixed
+// 9-digit fraction, string comparison matches chronological order.
+const retryNotBeforeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 // parseSQLiteTime parses a time string from SQLite which may be in different formats.
 // Handles RFC3339 (what we write), SQLite datetime('now') format, and timezone variants.
 // Returns zero time for empty strings. Logs a warning for non-empty unrecognized formats
@@ -189,10 +197,10 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
-	// retry_not_before is stored with sub-second precision (see RetryJob),
-	// so compare it against a nano-precision string to avoid sub-second
-	// backoffs collapsing into "equal" after second-precision truncation.
-	nowNano := now.Format(time.RFC3339Nano)
+	// retry_not_before uses a fixed-width sub-second layout so the
+	// lexicographic SQL comparison agrees with chronological order.
+	// See retryNotBeforeLayout for why RFC3339Nano is unsafe here.
+	nowNano := now.Format(retryNotBeforeLayout)
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
@@ -623,9 +631,10 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackoff time.Duration) (bool, error) {
 	var notBefore any
 	if retryBackoff > 0 {
-		// RFC3339Nano so sub-second backoffs (used in tests and for
-		// tight retry windows) aren't truncated to whole seconds.
-		notBefore = time.Now().Add(retryBackoff).Format(time.RFC3339Nano)
+		// Fixed-width layout (not RFC3339Nano) so the SQL string
+		// comparison in ClaimJob agrees with chronological order
+		// for sub-second backoffs.
+		notBefore = time.Now().Add(retryBackoff).Format(retryNotBeforeLayout)
 	}
 
 	var result sql.Result

@@ -885,7 +885,7 @@ func ghClone(
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh repo clone: %s: %s", err, string(out))
+		return fmt.Errorf("gh repo clone: %w: %s", err, string(out))
 	}
 	return nil
 }
@@ -990,7 +990,8 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return nil, fmt.Errorf("gh pr list: %s", string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("gh pr list: %w", err)
@@ -1007,7 +1008,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 func gitFetchCtx(ctx context.Context, repoPath string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %s", err, string(out))
+		return fmt.Errorf("%w: %s", err, string(out))
 	}
 	return nil
 }
@@ -1018,7 +1019,7 @@ func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int) error {
 	ref := fmt.Sprintf("pull/%d/head", prNumber)
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "origin", ref, "--quiet")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %s", err, string(out))
+		return fmt.Errorf("%w: %s", err, string(out))
 	}
 	return nil
 }
@@ -1582,7 +1583,7 @@ func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			return fmt.Errorf(
-				"set commit status: HTTP %d (body unreadable: %v)",
+				"set commit status: HTTP %d (body unreadable: %w)",
 				resp.StatusCode, readErr,
 			)
 		}

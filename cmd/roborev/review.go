@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -331,7 +332,8 @@ Examples:
 				err := waitForJob(cmd, ep, job.ID, quiet)
 				// Only silence Cobra's error output for exitError (verdict-based exit codes)
 				// Keep error output for actual failures (network errors, job not found, etc.)
-				if _, isExitErr := err.(*exitError); isExitErr {
+				var exitErr *exitError
+				if errors.As(err, &exitErr) {
 					cmd.SilenceErrors = true
 					cmd.SilenceUsage = true
 				}

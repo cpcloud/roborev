@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -236,7 +237,8 @@ func ghListRepos(ctx context.Context, owner string, env []string) ([]string, err
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return nil, fmt.Errorf("gh repo list %s: %s", owner, string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("gh repo list %s: %w", owner, err)

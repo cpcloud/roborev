@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -370,7 +371,7 @@ func (db *DB) CancelSupersededBatches(githubRepo string, prNumber int, newHeadSH
 		}
 		for _, jid := range jobIDs {
 			if err := db.CancelJob(jid); err != nil {
-				if err == sql.ErrNoRows {
+				if errors.Is(err, sql.ErrNoRows) {
 					continue // already terminal
 				}
 				return canceledIDs, fmt.Errorf("cancel job %d: %w", jid, err)
@@ -515,7 +516,7 @@ func (db *DB) CancelClosedPRBatches(
 		}
 		for _, jid := range jobIDs {
 			if err := db.CancelJob(jid); err != nil {
-				if err == sql.ErrNoRows {
+				if errors.Is(err, sql.ErrNoRows) {
 					continue
 				}
 				return canceledIDs, fmt.Errorf(

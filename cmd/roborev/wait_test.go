@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,7 +62,8 @@ func newWaitMockHandler(cfg mockConfig) http.HandlerFunc {
 func requireExitCode(t *testing.T, err error, code int) {
 	t.Helper()
 	require.Error(t, err)
-	exitErr, ok := err.(*exitError)
+	var exitErr *exitError
+	ok := errors.As(err, &exitErr)
 	assert.True(t, ok)
 	assert.Equal(t, exitErr.code, code)
 }
@@ -510,7 +512,8 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	require.Error(t, err)
 	// Should be a plain error, not an *exitError
-	_, ok := err.(*exitError)
+	var exitErr *exitError
+	ok := errors.As(err, &exitErr)
 	assert.False(t, ok, "review fetch failure should be a plain error, not exitError")
 }
 

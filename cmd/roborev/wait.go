@@ -151,7 +151,8 @@ Examples:
 					cmd.SilenceUsage = true
 					return &exitError{code: 1}
 				}
-				if _, isExitErr := err.(*exitError); isExitErr {
+				var exitErr *exitError
+				if errors.As(err, &exitErr) {
 					cmd.SilenceErrors = true
 					cmd.SilenceUsage = true
 				}

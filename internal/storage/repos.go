@@ -47,7 +47,7 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		}
 		return &repo, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
@@ -370,7 +370,7 @@ func (db *DB) FindRepo(identifier string) (*Repo, error) {
 	if err == nil {
 		return repo, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 

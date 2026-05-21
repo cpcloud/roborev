@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -613,7 +614,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// First, find the job_id by uuid
 	var jobID int64
 	err := db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return nil
 	}
@@ -642,7 +643,7 @@ func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 	// First, find the job_id by uuid
 	var jobID int64
 	err := db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this response (orphaned)
 		return nil
 	}
@@ -725,7 +726,7 @@ func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
 	if err == nil {
 		return placeholderID, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("find placeholder repo: %w", err)
 	}
 
@@ -786,7 +787,7 @@ func (db *DB) GetOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject s
 	if err == nil {
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("find commit: %w", err)
 	}
 

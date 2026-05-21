@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -321,7 +322,7 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("begin migration transaction: %w", err)
 		}
 		defer func() {
-			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 				return
 			}
 		}()
@@ -494,7 +495,7 @@ func (db *DB) migrate() error {
 	// Check if commit_id is NOT NULL by examining the schema
 	var responsesSql string
 	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='responses'`).Scan(&responsesSql)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check responses schema: %w", err)
 	}
 	// Only migrate if commit_id is NOT NULL (old schema)
@@ -517,7 +518,7 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("begin responses migration transaction: %w", err)
 		}
 		defer func() {
-			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 				return
 			}
 		}()
@@ -843,7 +844,7 @@ func (db *DB) migrateJobStatusConstraint() error {
 		return err
 	}
 	defer func() {
-		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 			return
 		}
 	}()
@@ -1128,7 +1129,7 @@ func (db *DB) migrateSyncColumns() error {
 	// Migration: If an old UNIQUE index exists, drop it first
 	var indexSQL sql.NullString
 	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_repos_identity'`).Scan(&indexSQL)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check existing idx_repos_identity: %w", err)
 	}
 	if indexSQL.Valid && strings.Contains(strings.ToUpper(indexSQL.String), "UNIQUE") {
@@ -1184,7 +1185,7 @@ func (db *DB) migrateSyncColumns() error {
 			return fmt.Errorf("begin commits migration transaction: %w", err)
 		}
 		defer func() {
-			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 				return
 			}
 		}()
